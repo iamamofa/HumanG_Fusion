@@ -132,6 +132,24 @@ Build the container:
 ```groovy
 docker build -t fusion-pipeline:latest docker/
 ```
+## Launch  the pipeline 
+````groovy
+nextflow run main.nf -profile docker \
+    --reads "./sample_data/*_R1.fastq.gz" \
+    --outdir "./results" \
+    --star_index "/refs/STAR_index_GRCh38" \
+    --genome_fasta "/refs/GRCh38.fa" \
+    --gtf "/refs/gencode.v41.annotation.gtf" \
+    --star_fusion_ctat_lib "/refs/ctat_resource_lib" \
+    --kraken_decontam true \
+    --kraken2_db "/refs/kraken2_db"
+````
+
+
+## Build with Singularity
+````groovy
+singularity build fusion-pipeline.sif singularity/Singularity.def
+````
 
 ## Module: `modules/preprocess/main.nf`
 
