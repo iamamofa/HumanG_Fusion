@@ -1,3 +1,13 @@
+ _   _ ______     _____ ____   ____  _____  ______ 
+ _   _ _____    ____ ___  ____  _____      _   _ __  __ ___ __  __ ____  
+| \ | |  ___|  / ___/ _ \|  _ \| ____|    | \ | |  \/  |_ _|  \/  |  _ \ 
+|  \| | |_    | |  | | | | |_) |  _|      |  \| | |\/| || || |\/| | |_) |
+| |\  |  _|   | |__| |_| |  _ <| |___     | |\  | |  | || || |  | |  _ < 
+|_| \_|_|      \____\___/|_| \_\_____|    |_| \_|_|  |_|___|_|  |_|_| \_\      
+     H U M A N   _ F   P I P E L I N E
+
+
+
 # Nextflow RNA-Seq Human Fusion Detection Pipeline
 
 This repository contains a **Nextflow (DSL2)** pipeline scaffold for **human-only RNA-Seq fusion detection**. It includes:
