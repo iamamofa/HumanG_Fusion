@@ -46,6 +46,7 @@ nextflow-fusion-pipeline/
 
 ---
 
+
 ## Important notes (before running)
 
 * This pipeline **enforces human-only processing** by aligning to a human reference (GRCh38) and by offering an **optional Kraken2 decontamination** step to remove non-human reads prior to fusion calling.
@@ -124,6 +125,13 @@ workflow {
 > Note: `Channel.fromFilePairs` accepts a glob or a TSV. If `samples_tsv` is provided it should be tab-delimited lines `sample_id\tpath_R1\tpath_R2`.
 
 ---
+
+# Running the tool:
+Build the container:
+
+```groovy
+docker build -t fusion-pipeline:latest docker/
+```
 
 ## Module: `modules/preprocess/main.nf`
 
