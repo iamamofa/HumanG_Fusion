@@ -132,6 +132,14 @@ Build the container:
 ```groovy
 docker build -t fusion-pipeline:latest docker/
 ```
+
+```groovy
+# 1️⃣ Build containers
+docker compose build
+
+# 2️⃣ Run data preparation + pipeline
+docker compose up
+```
 ## Launch  the pipeline 
 ````groovy
 nextflow run main.nf -profile docker \
