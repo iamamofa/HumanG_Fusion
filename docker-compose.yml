@@ -1,0 +1,88 @@
+version: "3.9"
+
+services:
+  # --- 1️⃣ Data Download & Reference Preparation ---
+  data_downloader:
+    image: ubuntu:22.04
+    container_name: humang_fusion_data_downloader
+    working_dir: /data
+    volumes:
+      - ./sample_data:/data/sample_data
+      - ./refs:/data/refs
+    environment:
+      THREADS: 8
+    command: >
+      bash -c "
+      set -e
+      echo '📦 Installing required tools...'
+      apt-get update && apt-get install -y aria2 wget curl unzip git build-essential python3 python3-pip default-jre samtools kraken2 star && \
+      
+      mkdir -p /data/sample_data /data/refs
+
+      echo '📥 Downloading sample FASTQs in parallel...'
+      # List of sample FASTQs (replace with your Zenodo URLs)
+      echo '
+      https://zenodo.org/record/1234567/files/sample1_R1.fastq.gz
+      https://zenodo.org/record/1234567/files/sample1_R2.fastq.gz
+      ' > /tmp/sample_urls.txt
+
+      aria2c -x 4 -s 4 -j 2 -d /data/sample_data -i /tmp/sample_urls.txt
+
+      echo '📥 Downloading reference files in parallel...'
+      # List of reference files (replace with your Zenodo URLs)
+      echo '
+      https://zenodo.org/record/1234567/files/GRCh38.primary_assembly.genome.fa.gz
+      https://zenodo.org/record/1234567/files/gencode.v41.annotation.gtf.gz
+      ' > /tmp/ref_urls.txt
+
+      aria2c -x 4 -s 4 -j 2 -d /data/refs -i /tmp/ref_urls.txt
+
+      # Unzip references
+      gunzip -f /data/refs/*.fa.gz || true
+      gunzip -f /data/refs/*.gtf.gz || true
+
+      # Build STAR index
+      echo '🌟 Building STAR index...'
+      mkdir -p /data/refs/STAR_index_GRCh38
+      STAR --runThreadN ${THREADS} --runMode genomeGenerate \
+           --genomeDir /data/refs/STAR_index_GRCh38 \
+           --genomeFastaFiles /data/refs/GRCh38.primary_assembly.genome.fa \
+           --sjdbGTFfile /data/refs/gencode.v41.annotation.gtf
+
+      # Build Kraken2 DB (human only)
+      echo '🧬 Building Kraken2 database...'
+      mkdir -p /data/refs/kraken2_db
+      kraken2-build --download-library human --db /data/refs/kraken2_db --threads ${THREADS}
+      kraken2-build --build --db /data/refs/kraken2_db --threads ${THREADS}
+
+      echo '✅ Data download and reference preparation complete.'
+      "
+    restart: "no"
+
+  # --- 2️⃣ Bash-based Fusion Pipeline ---
+  humang_fusion_bash:
+    build:
+      context: ./docker
+      dockerfile: Dockerfile
+    container_name: humang_fusion_bash
+    image: humang_fusion:latest
+    depends_on:
+      - data_downloader
+    working_dir: /pipeline
+    command: bash /pipeline/run_pipeline.sh
+    volumes:
+      - ./:/pipeline
+      - ./sample_data:/data
+      - ./refs:/refs
+      - ./results:/results
+    environment:
+      THREADS: 8
+      OUTDIR: /results
+      GENOME_FASTA: /refs/GRCh38.primary_assembly.genome.fa
+      GTF: /refs/gencode.v41.annotation.gtf
+      STAR_INDEX: /refs/STAR_index_GRCh38
+      KRAKEN2_DB: /refs/kraken2_db
+      KRAKEN_DECONTAM: "true"
+      RUN_FUSIONCATCHER: "false"
+    stdin_open: true
+    tty: true
