@@ -130,7 +130,7 @@ workflow {
 Build the container:
 
 ```groovy
-docker build -t fusion-pipeline:latest docker/
+docker build -f docker/Dockerfile -t fusion-pipeline .
 ```
 
 ```groovy
