@@ -39,7 +39,7 @@ fastq-dump --split-files <your SRA Accession Number>
 
 ---
 
-### 🍏 2. macOS
+###  2. macOS
 
 #### Option 1 — via Homebrew
 ```bash
@@ -56,7 +56,7 @@ Download from the [official NCBI site](https://ftp-trace.ncbi.nlm.nih.gov/sra/sd
 
 ---
 
-### 🪟 3. Windows
+###  3. Windows
 
 1. Go to:
    [🔗 SRA Toolkit Download](https://github.com/ncbi/sra-tools/wiki/01.-Downloading-SRA-Toolkit)
@@ -71,7 +71,7 @@ Download from the [official NCBI site](https://ftp-trace.ncbi.nlm.nih.gov/sra/sd
 
 ---
 
-### ✅ Test Human Samples
+### Test Human Samples
 
 To download paired-end FASTQ files from SRA:
 ```bash
