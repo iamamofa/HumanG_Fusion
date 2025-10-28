@@ -1,11 +1,12 @@
-# Nextflow Human RNA-Seq Fusion Detection Pipeline
+# HumanG_Fusion: RNA-Seq Fusion Detection Pipeline
 
 ![Pipeline Overview](image1.png)
 
-This **Nextflow DSL2** pipeline automates **human-only RNA-Seq fusion detection** using:
-- **STAR alignment (2-pass)**
-- **Fusion callers**: STAR-Fusion, Arriba, FusionCatcher (optional)
+**HumanG_Fusion** is a modular, Nextflow-based pipeline for **human RNA-Seq fusion detection**, featuring:
+- **Preprocessing** (FastQC, trimming)
 - **Optional Kraken2 decontamination**
+- **STAR alignment (2-pass)**
+- **Fusion calling** (STAR-Fusion, Arriba, FusionCatcher)
 - **Postprocessing & merging** with gene annotation
 
 ---
@@ -13,28 +14,23 @@ This **Nextflow DSL2** pipeline automates **human-only RNA-Seq fusion detection*
 ## 📦 Repository Layout
 
 ```
-nextflow-fusion-pipeline/
+HumanG_Fusion/
 ├── README.md
-├── nextflow.config
-├── main.nf
-├── modules/
-│   ├── preprocess/
-│   ├── kraken_decontam/
-│   ├── star_align/
-│   ├── fusion_callers/
-│   └── postprocess/
-├── conf/
-│   └── containers.config
+├── installation_setup/
+│   ├── Docker_setup/
+│   ├── bash_setup/
+│   └── python_setup/
 ├── docker/
-│   ├── Dockerfile
-│   └── fusion_env.Dockerfile
-├── singularity/
-│   └── Singularity.def
-├── tools/
-│   └── merge_fusions.py
 ├── bin/
-│   └── helper_scripts/
-└── sample_data/
+├── conf/
+├── modules/
+├── scripts/
+├── bash_scripts/
+├── tools/
+├── sample_data/
+├── main.nf
+├── pipeline.config.sh
+└── run_pipeline.sh
 ```
 
 ---
@@ -43,65 +39,83 @@ nextflow-fusion-pipeline/
 
 ## 1️⃣ Installation Setup
 
-Choose **one** of the following methods to set up your environment:
+Choose **one** of the following methods:
 
 ---
 
 ### 🐳 **Docker**
 **Best for:** Reproducible, containerized execution.
 
-#### Build the Docker image:
+#### Setup:
 ```bash
-docker build -t fusion-pipeline:latest docker/
+cd installation_setup/Docker_setup
+# Follow README.md for build/run instructions
+docker build -t humang_fusion:latest .
 ```
-#### Or, use Singularity:
+#### Or, use Docker Compose:
 ```bash
-singularity build fusion-pipeline.sif singularity/Singularity.def
+cd docker_compose_setup
+docker compose build
 ```
 
 ---
 
-### 🐍 **Python/Conda**
-**Best for:** Local development or HPC with Conda.
+### 📦 **Bash**
+**Best for:** Quick setup on Linux.
 
-#### Install Miniconda (if missing):
+#### Setup:
 ```bash
-wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
-bash Miniconda3-latest-Linux-x86_64.sh -b -p ~/miniconda3
+cd installation_setup/bash_setup
+chmod +x install.sh
+./install.sh
+```
+This will:
+- Install required apt packages (if sudo)
+- Install Miniconda under `~/miniconda3` (if missing)
+- Create a `bioinf` environment via mamba
+- Install all conda + pip packages
+
+#### Activate environment:
+```bash
 source ~/miniconda3/etc/profile.d/conda.sh
-conda create -n bioinf python=3.9
+conda activate bioinf
+# or, if fallback venv was used:
+source ~/pyenv-bioinf/bin/activate
+```
+
+---
+
+### 🐍 **Python**
+**Best for:** Python-centric environments.
+
+#### Setup:
+```bash
+cd installation_setup/python_setup
+chmod +x install.py
+./install.py
+```
+This will:
+- Install Miniconda (if missing)
+- Create a `bioinf` environment
+- Install all dependencies
+
+#### Activate environment:
+```bash
+source ~/miniconda3/etc/profile.d/conda.sh
 conda activate bioinf
 ```
-#### Install tools:
-```bash
-conda install -c bioconda -c conda-forge fastqc cutadapt kraken2 star star-fusion arriba fusioncatcher mygene samtools nextflow
-pip install mygene
-```
-
----
-
-### 📦 **Bash (Manual)**
-**Best for:** Custom or existing environments.
-
-#### Install dependencies:
-```bash
-sudo apt-get update && sudo apt-get install -y wget git samtools pigz python3 python3-pip
-pip install mygene
-```
-#### Download and install each tool manually (see [SRA Toolkit](https://github.com/ncbi/sra-tools/wiki/01.-Downloading-SRA-Toolkit) for reference).
 
 ---
 
 ## 2️⃣ Data Preparation
 
-**Place your FASTQ files in the `data/` directory:**
+Place your **FASTQ files** in `sample_data/`:
 ```
-project/
-└── data/
-    ├── sample1_R1.fastq.gz
-    ├── sample1_R2.fastq.gz
-    ├── sample2_R1.fastq.gz
-    └── sample2_R2.fastq.gz
+sample_data/
+├── sample1_R1.fastq.gz
+├── sample1_R2.fastq.gz
+├── sample2_R1.fastq.gz
+└── sample2_R2.fastq.gz
 ```
 
 ---
@@ -111,7 +125,7 @@ project/
 Edit `pipeline.config.sh` with your paths:
 ```bash
 #!/bin/bash
-export READS="./data/*_R1.fastq.gz"
+export READS="./sample_data/*_R1.fastq.gz"
 export OUTDIR="./results"
 export STAR_INDEX="/refs/STAR_index_GRCh38"
 export GENOME_FASTA="/refs/GRCh38.fa"
@@ -127,64 +141,30 @@ export RUN_FUSIONCATCHER=false
 
 ## 4️⃣ Run the Pipeline
 
-### 🐳 **Docker**
+### 🏃 **Automated (Recommended)**
 ```bash
-nextflow run main.nf -profile docker \
-    --reads "$READS" \
-    --outdir "$OUTDIR" \
-    --star_index "$STAR_INDEX" \
-    --genome_fasta "$GENOME_FASTA" \
-    --gtf "$GTF" \
-    --star_fusion_ctat_lib "$STAR_FUSION_CTAT_LIB" \
-    --kraken_decontam $KRAKEN_DECONTAM \
-    --kraken2_db "$KRAKEN2_DB"
+chmod +x run_pipeline.sh
+./run_pipeline.sh
 ```
+This script will:
+- Source your config
+- Run Nextflow with the correct profile (Docker, Conda, or Bash)
+- Execute all steps in order
 
-### 🐍 **Conda/Python**
-```bash
-nextflow run main.nf -profile conda \
-    --reads "$READS" \
-    --outdir "$OUTDIR" \
-    --star_index "$STAR_INDEX" \
-    --genome_fasta "$GENOME_FASTA" \
-    --gtf "$GTF" \
-    --star_fusion_ctat_lib "$STAR_FUSION_CTAT_LIB" \
-    --kraken_decontam $KRAKEN_DECONTAM \
-    --kraken2_db "$KRAKEN2_DB"
-```
-
-### 📦 **Bash (Manual)**
-```bash
-nextflow run main.nf \
-    --reads "$READS" \
-    --outdir "$OUTDIR" \
-    --star_index "$STAR_INDEX" \
-    --genome_fasta "$GENOME_FASTA" \
-    --gtf "$GTF" \
-    --star_fusion_ctat_lib "$STAR_FUSION_CTAT_LIB" \
-    --kraken_decontam $KRAKEN_DECONTAM \
-    --kraken2_db "$KRAKEN2_DB"
-```
+### 🛠 **Manual Step-by-Step**
+If you prefer, you can run each step manually using the scripts in `bash_scripts/` or `scripts/`.
 
 ---
 
 # 🔧 Pipeline Modules
 
-## **Preprocessing**
-- FastQC, trimming (cutadapt)
-- Output: trimmed FASTQ
-
-## **Kraken2 Decontamination** (optional)
-- Classifies reads, keeps only human/unclassified
-
-## **STAR Alignment**
-- 2-pass alignment, outputs BAM and chimeric junctions
-
-## **Fusion Callers**
-- STAR-Fusion, Arriba, FusionCatcher (optional)
-
-## **Postprocessing**
-- Merges calls, annotates genes, produces summary TSV
+| Module                | Description                                                                 |
+|-----------------------|-----------------------------------------------------------------------------|
+| `preprocess`          | FastQC, trimming (cutadapt)                                                |
+| `kraken_decontam`     | Optional: Remove non-human reads                                            |
+| `star_align`          | STAR 2-pass alignment                                                       |
+| `fusion_callers`      | STAR-Fusion, Arriba, FusionCatcher (optional)                              |
+| `postprocess`         | Merge calls, annotate genes, produce summary TSV                           |
 
 ---
 
@@ -216,7 +196,6 @@ nextflow run main.nf \
 
 - [ ] Add Singularity/Docker push automation
 - [ ] Add Nextflow Tower profiles
-- [ ] Wrap STAR-Fusion to use STAR outputs
 - [ ] Create a `tests/` folder with test FASTQs
 
 ---
@@ -224,3 +203,4 @@ nextflow run main.nf \
 # 💬 Questions?
 
 Open an issue or contact the maintainers!
+
