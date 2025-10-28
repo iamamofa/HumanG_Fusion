@@ -1,0 +1,38 @@
+version: "3.9"
+
+services:
+  bioinf:
+    image: bioinf:latest   # built from your Dockerfile
+    container_name: bioinf
+    tty: true               # keep container running for interactive sessions
+    stdin_open: true        # allow interactive shell
+    working_dir: /data
+    volumes:
+      - ./data:/data        # mount local ./data directory into container
+    environment:
+      - TZ=Etc/UTC
+      - LANG=en_US.UTF-8
+      - LC_ALL=en_US.UTF-8
+    # Optional: expose a port (e.g., for Jupyter or Nextflow UI)
+    # ports:
+    #   - "8888:8888"
+    #   - "8080:8080"
+    # Optional: limit resources
+    # deploy:
+    #   resources:
+    #     limits:
+    #       cpus: "4"
+    #       memory: 8G
+    #     reservations:
+    #       cpus: "2"
+    #       memory: 4G
+    # Optional: if using GPUs (requires Docker GPU runtime)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+    command: ["/bin/bash"]
