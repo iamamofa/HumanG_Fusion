@@ -1,6 +1,6 @@
 ## How to Use
 
-### 1️⃣ Build the Docker image
+###  Build the Docker image
 ```bash
 docker compose build
 ```
@@ -8,7 +8,7 @@ docker compose build
 
 ---
 
-### 2️⃣ Run an interactive container
+###  Run an interactive container
 ```bash
 docker compose run bioinf
 ```
@@ -20,7 +20,7 @@ Inside, the conda environment `bioinf` is already active.
 
 ---
 
-### 3️⃣ Mount data
+### Mount data
 All files in your local `./data/` directory are shared with `/data` inside the container:
 ```bash
 mkdir data
@@ -30,7 +30,7 @@ docker compose run bioinf fastqc some_reads.fastq
 
 ---
 
-### 4️⃣ Reuse container
+### Reuse container
 To keep it running as a long session (e.g., for Nextflow):
 ```bash
 docker compose up -d
