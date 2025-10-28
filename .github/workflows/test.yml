@@ -9,19 +9,26 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - name: 🧾 Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Set up Nextflow
+      - name: ⚙️ Set up Java (required for Nextflow)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: 🚀 Install Nextflow
         run: |
           curl -s https://get.nextflow.io | bash
-          sudo mv nextflow /usr/local/bin/
+          sudo mv nextflow /usr/local/bin/nextflow
+          nextflow -version
 
-      - name: Build Docker image
+      - name: 🐳 Build Docker image
         run: |
-          docker build -t fusion-pipeline:ci docker/
+          docker build -t fusion-pipeline:ci ./docker
 
-      - name: Run pipeline (sample_data)
+      - name: 🧬 Run Nextflow pipeline (sample data)
         run: |
           nextflow run main.nf -profile docker \
             --reads "./sample_data/*_R1.fastq.gz" \
@@ -30,3 +37,10 @@ jobs:
             --genome_fasta "/tmp/genome.fa" \
             --gtf "/tmp/genes.gtf" \
             --kraken_decontam false
+
+      - name: 📦 Upload results (for inspection)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextflow-results
+          path: ./results
