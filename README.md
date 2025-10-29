@@ -118,7 +118,18 @@ sample_data/
 └── sample2_R2.fastq.gz
 ```
 
+<br>
+
 ---
+
+##  2.1 Reference Preparation
+
+
+**Please Visit ➡️** **[References](\references\README.md)**
+
+
+<br>
+
 
 ## 3️⃣ Pipeline Configuration
 
