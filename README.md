@@ -125,7 +125,7 @@ sample_data/
 ##  2.1 Reference Preparation
 
 
-**Please Visit ➡️** **[References](\references\README.md)**
+**Please Visit ➡️** **[References](./references/README.md)**
 
 
 <br>
