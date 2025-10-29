@@ -203,4 +203,6 @@ If you prefer, you can run each step manually using the scripts in `bash_scripts
 # 💬 Questions?
 
 Open an issue or contact the maintainers!
-
+```bash
+Justiceoheneamofa@gmail.com / kdanquah@atu.edu.gh / kdanquah@noguchi.ug.edu.gh
+```
