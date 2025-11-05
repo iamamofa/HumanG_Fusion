@@ -2,7 +2,7 @@ version: "3.9"
 
 services:
   bioinf:
-    image: bioinf:latest   # built from your Dockerfile
+    image: your-dockerhub-username/bioinf:latest   # Pulled from Docker Hub
     container_name: bioinf
     tty: true               # keep container running for interactive sessions
     stdin_open: true        # allow interactive shell

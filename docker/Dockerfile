@@ -25,9 +25,13 @@ RUN wget -q https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.s
     bash /tmp/miniconda.sh -b -p ${CONDA_DIR} && rm /tmp/miniconda.sh && \
     ${CONDA_DIR}/bin/conda init bash
 
+# Accept conda ToS
+RUN conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
+RUN conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+
 # Ensure channels and install packages via mamba (faster)
 RUN conda install -y -n base -c conda-forge mamba && \
-    mamba config --set show_channel_urls true && \
+    mamba config set show_channel_urls true && \
     mamba update -n base -y conda
 
 # Install core bioinformatics packages. Adjust packages or add versions if you want strict pinning.
@@ -41,9 +45,7 @@ RUN mamba install -y -c bioconda -c conda-forge \
     cutadapt \
     kraken2 \
     star \
-    star-fusion \
-    arriba \
-    fusioncatcher \
+        star-fusion \
     mygene \
     pigz \
   && mamba clean -afy

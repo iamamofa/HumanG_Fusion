@@ -1,13 +1,18 @@
-## Build and Run
+## Pull, Build and Run
 
-### 1. Build the image
+### 1. Pull from Docker Hub (Recommended)
 ```bash
-docker build -t bioinf:latest .
+docker pull your-dockerhub-username/bioinf:latest
 ```
 
 ### 2. Run interactively
 ```bash
-docker run -it --rm bioinf:latest
+docker run -it --rm your-dockerhub-username/bioinf:latest
+```
+
+### 3. Build the image locally (Alternative)
+```bash
+docker build -t your-dockerhub-username/bioinf:latest .
 ```
 
 **Inside the container:**

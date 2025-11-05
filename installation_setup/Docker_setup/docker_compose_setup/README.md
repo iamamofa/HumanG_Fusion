@@ -1,10 +1,10 @@
 ## How to Use
 
-###  Build the Docker image
+###  Pull the Docker image
+`docker-compose` will automatically pull the image for you on the first run. If you want to pull it manually beforehand, run:
 ```bash
-docker compose build
+docker compose pull
 ```
-*(or if you already built it manually, skip this)*
 
 ---
 
