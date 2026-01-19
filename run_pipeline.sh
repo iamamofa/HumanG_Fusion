@@ -47,6 +47,9 @@ while IFS=$'\t' read -r sample r1 r2; do
   # step 5: report
   bash scripts/05_report.sh "${sample}" || { echo "Report failed for ${sample}"; exit 1; }
 
+  #step 6: output_results
+  bash scripts/$06 "${sample}" || { echo "Report failed for ${sample}"; exit 1; }
+
   echo "=== Done ${sample} ==="
 done < <(cat "${MAPFILE}")
 
