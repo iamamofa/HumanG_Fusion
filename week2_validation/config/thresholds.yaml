@@ -1,0 +1,63 @@
+# Week 2 Statistical Thresholds
+# Locked BEFORE any real data analysis
+
+# -------------------------------
+# General rules
+# -------------------------------
+dataset_frozen_required: true
+allow_real_data_analysis: false  # must remain false until Week 1 freeze
+
+# -------------------------------
+# Sample size requirements
+# -------------------------------
+minimum_sample_size:
+  benford: 100            # minimum N for Benford applicability
+  distribution_tests: 50  # minimum N for KS / Anderson–Darling
+
+# -------------------------------
+# Benford's Law settings
+# -------------------------------
+benford:
+  enabled: true
+  first_significant_digit_only: true
+  goodness_of_fit_test: chi_squared
+  significance_level: 0.05
+  decision_labels:
+    pass: "Benford-consistent"
+    fail: "Benford-inconsistent"
+    inconclusive: "Benford-not-applicable"
+
+# -------------------------------
+# Distribution testing
+# -------------------------------
+distribution_tests:
+  ks_test:
+    enabled: true
+    significance_level: 0.05
+  anderson_darling:
+    enabled: true
+    significance_level: 0.05
+
+# -------------------------------
+# Visualization rules
+# -------------------------------
+visualization:
+  allow_log_scale: true
+  allow_linear_scale: true
+  save_real_data_plots: false  # must remain false until freeze
+
+# -------------------------------
+# COSMIC cross-validation
+# -------------------------------
+cosmic:
+  enabled: true
+  require_exact_gene_match: true
+  allow_partial_matches: false
+  save_results_before_freeze: false
+
+# -------------------------------
+# Reporting rules
+# -------------------------------
+reporting:
+  allow_interpretation_before_freeze: false
+  allow_dataset_approval_before_freeze: false
