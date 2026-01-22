@@ -36,6 +36,43 @@ def generate_benford_compliant_data(n):
         data.append(value)
     return data
 
+# PRIMARY POSITIVE CONTROL:
+# Multi-decade Benford-compliant synthetic data generator.
+# Used only to validate Benford testing logic; never applied to real data.
+
+
+def generate_benford_compliant_data_multidecade(n):
+    """
+    Generate synthetic Benford-compliant data spanning 10^0 to 10^5.
+    
+    POSITIVE CONTROL ONLY. Uses inverse transform sampling: 10^U where
+    U~Uniform(0,1) yields first-digit probabilities log10(1 + 1/d).
+    
+    Args:
+        n: Number of positive floats to generate.
+    
+    Returns:
+        List of n positive floats following Benford's Law.
+    """
+    result = []
+    
+    for _ in range(n):
+        # Generate uniform random in [0, 1)
+        u = random.random()
+        
+        # Transform to Benford-distributed significand in [1, 10)
+        # Mathematical basis: 10^U has first digit d with probability log10(1 + 1/d)
+        significand = 10.0 ** u
+        
+        # Select random order of magnitude to span 6 decades (10^0 to 10^5)
+        exponent = random.randint(0, 5)
+        
+        # Combine significand with magnitude, preserving first-digit distribution
+        value = significand * (10.0 ** exponent)
+        
+        result.append(value)
+    
+    return result
 
 def generate_uniform_data(n):
     """
