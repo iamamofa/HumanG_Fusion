@@ -31,6 +31,10 @@ def chi_squared_p_value(chi2, degrees_of_freedom):
     Approximate chi-squared p-value using survival function approximation.
     Avoids external libraries.
     """
+        # NOTE:
+    # This p-value calculation is an approximation and is used for
+    # diagnostic purposes only, not for inferential claims.
+
     # Using incomplete gamma approximation
     k = degrees_of_freedom / 2.0
     x = chi2 / 2.0
