@@ -1,72 +1,163 @@
-\# Week 2: Data Integrity \& Statistical Validation (Preparation Only)
+# Week 2: Data Integrity & Statistical Validation (Preparation Only)
 
+## Overview
 
+This directory contains all scripts, configuration files, and documentation
+used for **Week 2: Data Integrity & Statistical Validation** of the
+HumanG_Fusion project.
 
-\## Purpose
+Week 2 is designed to validate the **statistical structure, integrity, and
+modeling suitability** of fusion protein length data prior to any
+hypothesis-driven or power-law–based analyses.
 
-This directory contains all scripts, configurations, and documentation
+All work in this directory is conducted in **preparatory mode only**.
 
-for Week 2 of the project:
+No biological conclusions, statistical inferences, or modeling results are
+generated at this stage.
 
-Data Integrity \& Statistical Validation.
+---
 
+## Purpose of Week 2
 
+The primary goals of Week 2 are to:
 
-All work in this directory is conducted in \*\*preparation mode only\*\*.
+- Verify that fusion protein length data is structurally suitable for
+  downstream statistical modeling.
+- Identify potential artifacts arising from pipeline processing,
+  discretization, truncation, or filtering.
+- Establish whether key modeling assumptions (e.g., scale span,
+  distributional behavior) are satisfied.
+- Validate statistical testing implementations using controlled synthetic data.
+- Define objective criteria for determining whether a dataset is eligible
+  for downstream Zipf’s Law and power-law modeling.
 
+Week 2 does **not** test biological hypotheses and does **not** attempt to
+confirm or reject any theoretical models.
 
+---
 
-\## Important Rules
+## Important Rules and Constraints
 
-\- No analyses in this directory are run on the real fusion dataset
+The following rules are strictly enforced:
 
-&nbsp; until Week 1 outputs are finalized and frozen.
+- **No analyses in this directory are run on real fusion datasets**
+  until Week 1 outputs (fusion genes, protein lengths, recurrence counts)
+  are finalized and frozen.
 
-\- No results generated here are considered final or reportable.
+- **No results generated here are considered final, reportable, or
+  publication-ready.**
 
-\- All scripts are tested only on simulated or toy data.
+- All scripts are tested **only on simulated, synthetic, or toy data**
+  until explicit authorization is given to analyze real data.
 
+- Statistical thresholds, applicability criteria, and interpretation rules
+  are defined **prior to real data analysis** and are not tuned post hoc.
 
+These constraints are in place to ensure reproducibility, prevent
+outcome-driven adjustments, and maintain methodological rigor.
 
-\## Scope of Work
+---
 
-This directory will include:
+## Scope of Work
 
-\- Protein length distribution visualization scripts
+This directory includes scripts and configuration files for the following
+Week 2 validation tasks:
 
-\- Log-normality testing (KS / Anderson–Darling)
+- Visualization of fusion protein length distributions
+  (linear-scale and log-scale histograms).
 
-\- Benford’s Law analysis (FSD + Chi-squared test)
+- Diagnostic testing of distributional behavior, including log-normality
+  assessments using Kolmogorov–Smirnov and Anderson–Darling tests.
 
-\- Positive and negative Benford control generators
+- Structural data diagnostics using Benford’s Law applied to fusion protein
+  length values.
 
-\- COSMIC cross-validation logic (structure only)
+- Generation of **synthetic positive and negative control datasets** for
+  validating Benford’s Law implementations.
 
-\- Configuration files defining statistical thresholds
+- Definition of statistical thresholds, applicability rules, and
+  interpretation boundaries via configuration files.
 
+---
 
+## Benford’s Law: Scope and Interpretation
 
-\## Branch Policy
+Benford’s Law is used in Week 2 as a **diagnostic tool only**.
 
-All work is committed to the branch:
+Specifically:
 
-`feature/week2-statistical-validation`
+- Benford’s Law is applied to assess whether fusion protein length values
+  exhibit scale-invariant first-digit behavior commonly observed in many
+  naturally occurring datasets.
 
+- Benford’s Law is **not** treated as a test of data validity, data quality,
+  authenticity, or fraud.
 
+- Non-compliance with Benford’s Law does **not** imply data fabrication or
+  biological irrelevance.
 
-Nothing in this directory will be merged into `main`
+- Outcomes classified as **“Benford-not-applicable”** are explicitly allowed
+  when dataset characteristics (e.g., limited scale range, discretization)
+  violate Benford applicability assumptions.
 
-until approved by the project leads.
+---
 
+## Control Data and Reproducibility
 
+To validate statistical testing implementations:
 
-\## Security \& Ethics
+- **Positive control datasets** are generated to follow Benford’s Law by
+  construction and span multiple orders of magnitude.
 
-\- No API keys, tokens, or credentials are used.
+- **Negative control datasets** are generated using non-Benford distributions
+  (e.g., uniform distributions).
 
-\- No external network calls are made.
+- Fixed random seeds are used for control data generation to ensure
+  reproducibility of validation tests.
 
-\- No sensitive or personal data is included.
+Control datasets are used **only** to verify correctness of statistical tools
+and do not represent real biological data.
 
+---
 
+## Configuration and Thresholds
 
+All statistical thresholds, minimum sample size requirements, and
+interpretation rules used in Week 2 are defined in configuration files
+(e.g., `thresholds.yaml`).
+
+These settings:
+
+- Are locked prior to any real data analysis.
+- Apply uniformly across all Week 2 validation steps.
+- Serve as diagnostic criteria rather than inferential decision rules.
+
+---
+
+## Relationship to Downstream Analyses
+
+Week 2 serves as a **gatekeeping and validation phase** for downstream
+modeling.
+
+Only datasets that satisfy minimum sample size requirements and diagnostic
+suitability criteria defined in this directory are eligible for:
+
+- Power-law modeling
+- Zipf’s Law analysis of fusion protein length and recurrence frequency
+
+All downstream analyses (Week 3 and beyond) are contingent upon successful
+completion of Week 2 validation.
+
+---
+
+## Summary
+
+In summary, this directory provides a controlled, reproducible framework
+for validating the statistical integrity and modeling suitability of fusion
+protein length data.
+
+No hypotheses are tested, no models are fit, and no conclusions are drawn
+at this stage.
+
+The sole purpose of Week 2 is to ensure that any subsequent modeling is
+methodologically justified, statistically sound, and reproducible.
