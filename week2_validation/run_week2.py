@@ -13,7 +13,9 @@ When a user runs this program from the command line, this file:
 2. Loads configuration from thresholds.yaml
 3. Checks dataset freeze state (Option C: flag file takes precedence over CLI)
 4. Validates all input files exist and are in the correct format
-5. If --run-diagnostics is requested AND dataset is frozen, runs diagnostics
+5. If diagnostics requested AND dataset is frozen, runs requested diagnostics:
+   - --run-diagnostics: distribution diagnostics
+   - --run-benford: Benford's Law diagnostics (diagnostic only, no inference)
 6. Reports the results
 
 EXECUTION FLOW:
@@ -24,8 +26,9 @@ EXECUTION FLOW:
     │  4. Validate input files                                        │
     │  5. If --dry-run: exit after validation                         │
     │  6. If NOT frozen: exit with message                            │
-    │  7. If frozen but NO --run-diagnostics: exit with message       │
-    │  8. If frozen AND --run-diagnostics: run diagnostics            │
+    │  7. If frozen but NO diagnostics requested: exit with message   │
+    │  8. If frozen AND --run-diagnostics: run distribution diags     │
+    │  9. If frozen AND --run-benford: run Benford diags              │
     └─────────────────────────────────────────────────────────────────┘
 
 This pipeline is diagnostic only:
@@ -39,6 +42,7 @@ Usage:
         --output-dir /path/to/output \\
         [--cosmic-data /path/to/cosmic.tsv] \\
         [--run-diagnostics] \\
+        [--run-benford] \\
         [--dry-run]
 
 Security considerations:
@@ -142,14 +146,16 @@ class PipelineConfig:
         output_dir: Folder where results will be saved.
         cosmic_data_path: Optional location of COSMIC reference data.
         dry_run: If True, only check inputs without running full analysis.
-        run_diagnostics: If True, run diagnostic analysis (requires frozen dataset).
+        run_diagnostics: If True, run distribution diagnostics (requires frozen dataset).
+        run_benford: If True, run Benford's Law diagnostics (requires frozen dataset).
     """
 
     fusion_data_path: Path          # Where the fusion data file is located
     output_dir: Path                # Where to save the output/results
     cosmic_data_path: Optional[Path]  # Optional reference data location (can be empty)
     dry_run: bool                   # True = just validate, False = run full analysis
-    run_diagnostics: bool           # True = run diagnostics (if frozen), False = skip
+    run_diagnostics: bool           # True = run distribution diagnostics (if frozen), False = skip
+    run_benford: bool               # True = run Benford diagnostics (if frozen), False = skip
 
 
 # =============================================================================
@@ -271,16 +277,30 @@ def create_argument_parser() -> argparse.ArgumentParser:
     )
 
     # Define the run-diagnostics flag (OPTIONAL)
-    # This explicitly requests diagnostic analysis to run
+    # This explicitly requests distribution diagnostic analysis to run
     # IMPORTANT: Diagnostics only run if dataset is also frozen
     optional_group.add_argument(
         "--run-diagnostics",
         action="store_true",       # Just a flag, no value needed
         default=False,             # Off by default (explicit request required)
         help=(
-            "Run diagnostic analysis on the dataset. "
+            "Run distribution diagnostic analysis on the dataset. "
             "REQUIRES dataset to be frozen. "
             "If not specified, only input validation is performed."
+        ),
+    )
+
+    # Define the run-benford flag (OPTIONAL)
+    # This explicitly requests Benford's Law diagnostic analysis
+    # IMPORTANT: Diagnostics only run if dataset is also frozen
+    optional_group.add_argument(
+        "--run-benford",
+        action="store_true",       # Just a flag, no value needed
+        default=False,             # Off by default (explicit request required)
+        help=(
+            "Run Benford's Law diagnostic analysis on the dataset. "
+            "REQUIRES dataset to be frozen. "
+            "Diagnostic only: no inference, no pass/fail determination."
         ),
     )
 
@@ -356,6 +376,7 @@ def validate_arguments(args: argparse.Namespace) -> PipelineConfig:
         cosmic_data_path=cosmic_path,
         dry_run=args.dry_run,
         run_diagnostics=args.run_diagnostics,
+        run_benford=args.run_benford,
     )
 
 
@@ -546,6 +567,111 @@ def execute_diagnostics(config: PipelineConfig, week2_config: Week2Config) -> in
 
 
 # =============================================================================
+# BENFORD DIAGNOSTIC EXECUTION (LAZY IMPORT)
+# =============================================================================
+
+def execute_benford_diagnostics(config: PipelineConfig, week2_config: Week2Config) -> int:
+    """
+    Execute Benford's Law diagnostic analysis on the fusion dataset.
+    
+    This function performs a LAZY IMPORT of the Benford diagnostic module
+    to avoid unnecessary dependencies when Benford diagnostics aren't requested.
+    
+    IMPORTANT: This function should ONLY be called when:
+    - Dataset is frozen (already verified by caller)
+    - --run-benford flag is True (already verified by caller)
+    
+    Args:
+        config: Pipeline configuration with file paths.
+        week2_config: Week2 configuration from thresholds.yaml.
+    
+    Returns:
+        Exit code: 0 for success, non-zero for failure.
+    """
+    print("Starting Benford's Law diagnostic analysis...")
+    print()
+    
+    # -------------------------------------------------------------------------
+    # LAZY IMPORT: Only import Benford module when actually needed
+    # -------------------------------------------------------------------------
+    try:
+        from week2_validation.benford.diagnostics import run_benford_diagnostics
+    except ImportError as e:
+        print(f"Error: Cannot import Benford diagnostic module: {e}", file=sys.stderr)
+        print("Make sure all required dependencies are installed.", file=sys.stderr)
+        return 1
+    
+    # -------------------------------------------------------------------------
+    # Load the fusion data for Benford analysis
+    # -------------------------------------------------------------------------
+    try:
+        fusion_df = load_fusion_data(str(config.fusion_data_path))
+    except Exception as e:
+        print(f"Error loading fusion data for Benford diagnostics: {e}", file=sys.stderr)
+        return 1
+    
+    # -------------------------------------------------------------------------
+    # Extract protein_length column for analysis
+    # No assumptions about data format - just use what's in the required column
+    # -------------------------------------------------------------------------
+    if "protein_length" not in fusion_df.columns:
+        print("Error: 'protein_length' column not found in fusion data.", file=sys.stderr)
+        return 1
+    
+    protein_lengths = fusion_df["protein_length"].tolist()
+    
+    # -------------------------------------------------------------------------
+    # Run Benford diagnostics (returns BenfordDiagnosticResult, does NOT save files)
+    # -------------------------------------------------------------------------
+    try:
+        print(f"Running Benford diagnostics on {len(protein_lengths)} protein length values...")
+        result = run_benford_diagnostics(data=protein_lengths)
+        
+        # Report results (no interpretation, just facts)
+        print()
+        print("Benford Diagnostic Results:")
+        print(f"  Total input values: {result.total_input_values}")
+        print(f"  Values analyzed: {result.total_extracted_digits}")
+        print(f"  Values excluded: {result.values_excluded_count}")
+        print()
+        
+        if result.computation_successful:
+            print("  Observed first-digit frequencies:")
+            for digit in range(1, 10):
+                obs = result.observed_frequencies.get(digit, 0.0)
+                exp = result.expected_frequencies.get(digit, 0.0)
+                print(f"    Digit {digit}: observed={obs:.4f}, Benford expected={exp:.4f}")
+            print()
+            
+            if result.chi_squared_statistic is not None:
+                print(f"  Chi-squared statistic: {result.chi_squared_statistic:.4f}")
+                print(f"  Degrees of freedom: {result.degrees_of_freedom}")
+                if result.p_value is not None:
+                    print(f"  p-value: {result.p_value:.6f}")
+            print()
+            
+            # Report applicability assessment (diagnostic only)
+            if result.metadata.benford_applicable is not None:
+                status = "applicable" if result.metadata.benford_applicable else "not applicable"
+                print(f"  Benford applicability (heuristic): {status}")
+                if result.metadata.reason_if_not_applicable:
+                    print(f"  Reason: {result.metadata.reason_if_not_applicable}")
+                if result.metadata.scale_span_orders_of_magnitude is not None:
+                    print(f"  Scale span: {result.metadata.scale_span_orders_of_magnitude:.2f} orders of magnitude")
+        
+        print()
+        print("Benford diagnostic analysis complete.")
+        print("NOTE: Results are diagnostic only. No inference drawn. No interpretation provided.")
+        print(f"      {result.metadata.disclaimer}")
+        
+    except Exception as e:
+        print(f"Error during Benford diagnostic analysis: {e}", file=sys.stderr)
+        return 1
+    
+    return 0
+
+
+# =============================================================================
 # MAIN PIPELINE EXECUTION
 # =============================================================================
 
@@ -658,10 +784,10 @@ def run_pipeline(config: PipelineConfig) -> int:
         return 0  # Exit cleanly (not an error, just a gate)
 
     # =========================================================================
-    # STEP 6: Dataset is frozen - check if diagnostics were requested
+    # STEP 6: Dataset is frozen - check if any diagnostics were requested
     # =========================================================================
-    if not config.run_diagnostics:
-        # Dataset is frozen, but --run-diagnostics flag was not provided
+    if not config.run_diagnostics and not config.run_benford:
+        # Dataset is frozen, but neither diagnostic flag was provided
         print("=" * 60)
         print("DATASET FROZEN - DIAGNOSTICS NOT REQUESTED")
         print("=" * 60)
@@ -669,25 +795,41 @@ def run_pipeline(config: PipelineConfig) -> int:
         print()
         print("Input validation completed successfully.")
         print()
-        print("To run diagnostic analysis, use the --run-diagnostics flag:")
+        print("To run diagnostic analysis, use one or more flags:")
         print(f"  python -m week2_validation.run_week2 \\")
         print(f"      --fusion-data {config.fusion_data_path} \\")
         print(f"      --output-dir {config.output_dir} \\")
-        print(f"      --run-diagnostics")
+        print(f"      --run-diagnostics    # Distribution diagnostics")
+        print(f"      --run-benford        # Benford's Law diagnostics")
         return 0  # Exit cleanly (explicit request required)
 
     # =========================================================================
-    # STEP 7: Dataset is frozen AND --run-diagnostics requested
+    # STEP 7: Dataset is frozen AND diagnostics requested - execute
     # =========================================================================
     print("=" * 60)
     print("RUNNING DIAGNOSTICS")
     print("=" * 60)
     print("Dataset is frozen: YES")
-    print("Diagnostics requested: YES")
+    print(f"Distribution diagnostics requested: {'YES' if config.run_diagnostics else 'NO'}")
+    print(f"Benford diagnostics requested: {'YES' if config.run_benford else 'NO'}")
     print()
     
-    # Execute diagnostics (lazy import happens inside)
-    return execute_diagnostics(config, week2_config)
+    exit_code = 0
+    
+    # Execute distribution diagnostics if requested (lazy import happens inside)
+    if config.run_diagnostics:
+        result = execute_diagnostics(config, week2_config)
+        if result != 0:
+            exit_code = result
+        print()
+    
+    # Execute Benford diagnostics if requested (lazy import happens inside)
+    if config.run_benford:
+        result = execute_benford_diagnostics(config, week2_config)
+        if result != 0:
+            exit_code = result
+    
+    return exit_code
 
 
 # =============================================================================
