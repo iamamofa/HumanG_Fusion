@@ -10,9 +10,23 @@ WHAT DOES THIS FILE DO?
 This is the main "control center" for running the Week 2 validation checks.
 When a user runs this program from the command line, this file:
 1. Reads the user's instructions (which files to analyze, where to save results)
-2. Checks that all the specified files exist and are in the correct format
-3. Runs the validation analysis
-4. Reports the results
+2. Loads configuration from thresholds.yaml
+3. Checks dataset freeze state (Option C: flag file takes precedence over CLI)
+4. Validates all input files exist and are in the correct format
+5. If --run-diagnostics is requested AND dataset is frozen, runs diagnostics
+6. Reports the results
+
+EXECUTION FLOW:
+    ┌─────────────────────────────────────────────────────────────────┐
+    │  1. Parse CLI arguments                                         │
+    │  2. Load thresholds.yaml configuration                          │
+    │  3. Check freeze state (flag file > CLI > error)                │
+    │  4. Validate input files                                        │
+    │  5. If --dry-run: exit after validation                         │
+    │  6. If NOT frozen: exit with message                            │
+    │  7. If frozen but NO --run-diagnostics: exit with message       │
+    │  8. If frozen AND --run-diagnostics: run diagnostics            │
+    └─────────────────────────────────────────────────────────────────┘
 
 This pipeline is diagnostic only:
     - No hypothesis testing
@@ -24,6 +38,7 @@ Usage:
         --fusion-data /path/to/fusion_data.csv \\
         --output-dir /path/to/output \\
         [--cosmic-data /path/to/cosmic.tsv] \\
+        [--run-diagnostics] \\
         [--dry-run]
 
 Security considerations:
@@ -31,7 +46,12 @@ Security considerations:
     - No directory traversal is permitted
     - Output is restricted to the specified output directory
     - No sensitive data is logged or printed
+    - Diagnostics only run when explicitly requested AND dataset is frozen
 """
+
+# =============================================================================
+# STANDARD LIBRARY IMPORTS
+# =============================================================================
 
 # 'argparse' helps read and understand command-line arguments (user instructions)
 import argparse
@@ -43,6 +63,10 @@ from dataclasses import dataclass
 from pathlib import Path
 # 'Optional' indicates that a value might be present or might be None (empty)
 from typing import Optional
+
+# =============================================================================
+# INTERNAL IMPORTS - Data Loading
+# =============================================================================
 
 # Import our custom data loading tools from the utils folder
 # These handle reading files and checking they're in the correct format
@@ -57,6 +81,46 @@ from week2_validation.utils.data_loader import (
     validate_output_directory, # Function to check if output folder is valid
 )
 
+# =============================================================================
+# INTERNAL IMPORTS - Configuration and State
+# =============================================================================
+
+# Import configuration loader for thresholds.yaml
+from week2_validation.config.loader import (
+    ConfigError,               # Error when configuration loading fails
+    Week2Config,               # Configuration dataclass
+    load_config,               # Function to load config from path
+)
+
+# Import freeze state management (Option C implementation)
+from week2_validation.utils.state import (
+    StateError,                # Error when state cannot be determined
+    FreezeState,               # Immutable freeze state representation
+    resolve_freeze_state,      # Resolves freeze state from flag file + CLI
+)
+
+# =============================================================================
+# NOTE: Diagnostic modules are NOT imported at top level.
+# They are imported lazily ONLY when diagnostics are requested AND allowed.
+# This prevents unnecessary dependencies and side effects.
+# =============================================================================
+
+# =============================================================================
+# CONSTANTS
+# =============================================================================
+
+# Default path to the freeze flag file (relative to workspace root)
+# If this file EXISTS, the dataset is considered frozen.
+# This is the "authoritative" source for freeze state (Option C).
+DEFAULT_FLAG_FILE_PATH = Path("week2_validation/.frozen")
+
+# Default path to the configuration file
+DEFAULT_CONFIG_PATH = Path("week2_validation/config/thresholds.yaml")
+
+
+# =============================================================================
+# PIPELINE CONFIGURATION
+# =============================================================================
 
 # The '@dataclass' decorator automatically creates a class that holds data.
 # 'frozen=True' means once created, the values cannot be changed (like a locked form).
@@ -69,6 +133,7 @@ class PipelineConfig:
     - Where to find the input data files
     - Where to save the results
     - Whether to do a test run or full analysis
+    - Whether to run diagnostics (requires frozen dataset)
     
     Think of it as a filled-out form that tells the pipeline what to do.
 
@@ -77,13 +142,19 @@ class PipelineConfig:
         output_dir: Folder where results will be saved.
         cosmic_data_path: Optional location of COSMIC reference data.
         dry_run: If True, only check inputs without running full analysis.
+        run_diagnostics: If True, run diagnostic analysis (requires frozen dataset).
     """
 
     fusion_data_path: Path          # Where the fusion data file is located
     output_dir: Path                # Where to save the output/results
     cosmic_data_path: Optional[Path]  # Optional reference data location (can be empty)
     dry_run: bool                   # True = just validate, False = run full analysis
+    run_diagnostics: bool           # True = run diagnostics (if frozen), False = skip
 
+
+# =============================================================================
+# CUSTOM ERROR TYPES
+# =============================================================================
 
 # Custom error types help us identify what went wrong when something fails
 class PipelineError(Exception):
@@ -93,7 +164,6 @@ class PipelineError(Exception):
     This is a general error that occurs when something goes wrong
     while running the validation pipeline.
     """
-
     pass
 
 
@@ -104,9 +174,22 @@ class ConfigurationError(PipelineError):
     This error occurs when the user provides incorrect settings,
     like a file path that doesn't exist or an invalid option.
     """
-
     pass
 
+
+class FreezeStateError(PipelineError):
+    """
+    Raised when dataset freeze state prevents operation.
+    
+    This error occurs when an operation requires a frozen dataset
+    but the dataset is not frozen.
+    """
+    pass
+
+
+# =============================================================================
+# ARGUMENT PARSING
+# =============================================================================
 
 def create_argument_parser() -> argparse.ArgumentParser:
     """
@@ -131,11 +214,15 @@ def create_argument_parser() -> argparse.ArgumentParser:
         # Show an example of how to use the program
         epilog=(
             "Example: python -m week2_validation.run_week2 "
-            "--fusion-data fusion.csv --output-dir ./results"
+            "--fusion-data fusion.csv --output-dir ./results --run-diagnostics"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
+    # -------------------------------------------------------------------------
+    # REQUIRED ARGUMENTS
+    # -------------------------------------------------------------------------
+    
     # Create a group for arguments that MUST be provided
     required_group = parser.add_argument_group("required arguments")
 
@@ -162,6 +249,10 @@ def create_argument_parser() -> argparse.ArgumentParser:
         help="Directory where validation results will be written.",
     )
 
+    # -------------------------------------------------------------------------
+    # OPTIONAL ARGUMENTS
+    # -------------------------------------------------------------------------
+
     # Create a group for arguments that are OPTIONAL
     optional_group = parser.add_argument_group("optional arguments")
 
@@ -179,6 +270,20 @@ def create_argument_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    # Define the run-diagnostics flag (OPTIONAL)
+    # This explicitly requests diagnostic analysis to run
+    # IMPORTANT: Diagnostics only run if dataset is also frozen
+    optional_group.add_argument(
+        "--run-diagnostics",
+        action="store_true",       # Just a flag, no value needed
+        default=False,             # Off by default (explicit request required)
+        help=(
+            "Run diagnostic analysis on the dataset. "
+            "REQUIRES dataset to be frozen. "
+            "If not specified, only input validation is performed."
+        ),
+    )
+
     # Define the dry-run flag (OPTIONAL)
     # When set, the program only checks inputs without running full analysis
     optional_group.add_argument(
@@ -193,6 +298,10 @@ def create_argument_parser() -> argparse.ArgumentParser:
 
     return parser
 
+
+# =============================================================================
+# ARGUMENT VALIDATION
+# =============================================================================
 
 def validate_arguments(args: argparse.Namespace) -> PipelineConfig:
     """
@@ -246,8 +355,13 @@ def validate_arguments(args: argparse.Namespace) -> PipelineConfig:
         output_dir=output_dir,
         cosmic_data_path=cosmic_path,
         dry_run=args.dry_run,
+        run_diagnostics=args.run_diagnostics,
     )
 
+
+# =============================================================================
+# INPUT VALIDATION
+# =============================================================================
 
 def validate_inputs(config: PipelineConfig) -> None:
     """
@@ -310,12 +424,147 @@ def validate_inputs(config: PipelineConfig) -> None:
     print(f"Output directory validated: {config.output_dir}")
 
 
+# =============================================================================
+# FREEZE STATE CHECKING
+# =============================================================================
+
+def check_freeze_state(flag_file_path: Path) -> FreezeState:
+    """
+    Check and return the dataset freeze state.
+    
+    Uses Option C logic:
+    - If flag file exists → dataset is frozen (authoritative)
+    - If flag file doesn't exist → dataset is NOT frozen
+    
+    Args:
+        flag_file_path: Path to the freeze flag file.
+    
+    Returns:
+        FreezeState object indicating frozen status and source.
+    
+    Raises:
+        FreezeStateError: If freeze state cannot be determined.
+    """
+    try:
+        # Try to resolve freeze state from flag file
+        # We pass cli_frozen=False as default when flag file doesn't exist
+        # This means: no flag file = not frozen (safe default)
+        return resolve_freeze_state(flag_file_path, cli_frozen=False)
+    except StateError as e:
+        raise FreezeStateError(f"Cannot determine freeze state: {e}") from e
+
+
+# =============================================================================
+# DIAGNOSTIC EXECUTION (LAZY IMPORT)
+# =============================================================================
+
+def execute_diagnostics(config: PipelineConfig, week2_config: Week2Config) -> int:
+    """
+    Execute diagnostic analysis on the fusion dataset.
+    
+    This function performs a LAZY IMPORT of the diagnostic module
+    to avoid unnecessary dependencies when diagnostics aren't requested.
+    
+    IMPORTANT: This function should ONLY be called when:
+    - Dataset is frozen (already verified by caller)
+    - --run-diagnostics flag is True (already verified by caller)
+    
+    Args:
+        config: Pipeline configuration with file paths.
+        week2_config: Week2 configuration from thresholds.yaml.
+    
+    Returns:
+        Exit code: 0 for success, non-zero for failure.
+    """
+    print("Starting diagnostic analysis...")
+    print()
+    
+    # -------------------------------------------------------------------------
+    # LAZY IMPORT: Only import diagnostics module when actually needed
+    # This prevents loading heavy dependencies (numpy, matplotlib) when
+    # the user only wants to validate inputs.
+    # -------------------------------------------------------------------------
+    try:
+        from week2_validation.distributions.visualize import run_diagnostics
+    except ImportError as e:
+        print(f"Error: Cannot import diagnostic module: {e}", file=sys.stderr)
+        print("Make sure all required dependencies are installed.", file=sys.stderr)
+        return 1
+    
+    # -------------------------------------------------------------------------
+    # Load the fusion data for diagnostic analysis
+    # -------------------------------------------------------------------------
+    try:
+        fusion_df = load_fusion_data(str(config.fusion_data_path))
+    except Exception as e:
+        print(f"Error loading fusion data for diagnostics: {e}", file=sys.stderr)
+        return 1
+    
+    # -------------------------------------------------------------------------
+    # Extract protein_length column for analysis
+    # No assumptions about data format - just use what's in the required column
+    # -------------------------------------------------------------------------
+    if "protein_length" not in fusion_df.columns:
+        print("Error: 'protein_length' column not found in fusion data.", file=sys.stderr)
+        return 1
+    
+    protein_lengths = fusion_df["protein_length"].tolist()
+    
+    # -------------------------------------------------------------------------
+    # Run diagnostics (returns DiagnosticResult, does NOT save files)
+    # -------------------------------------------------------------------------
+    try:
+        print(f"Running diagnostics on {len(protein_lengths)} protein length values...")
+        result = run_diagnostics(
+            data=protein_lengths,
+            log_mode="transform",
+            include_log_histogram=week2_config.visualization.allow_log_scale,
+        )
+        
+        # Report results (no interpretation, just facts)
+        print()
+        print("Diagnostic Results:")
+        print(f"  Sample size: {result.statistics.count}")
+        print(f"  Min: {result.statistics.minimum:.2f}")
+        print(f"  Max: {result.statistics.maximum:.2f}")
+        print(f"  Mean: {result.statistics.mean:.2f}")
+        print(f"  Median: {result.statistics.median:.2f}")
+        print(f"  Std Dev: {result.statistics.std:.2f}")
+        print()
+        print(f"  Log mode used: {result.log_mode_used}")
+        print(f"  Diagnostic only: {result.metadata.diagnostic_only}")
+        print(f"  Hypothesis tested: {result.metadata.hypothesis_tested}")
+        print()
+        print("Diagnostic analysis complete.")
+        print("NOTE: Results are diagnostic only. No files saved. No interpretation provided.")
+        
+    except Exception as e:
+        print(f"Error during diagnostic analysis: {e}", file=sys.stderr)
+        return 1
+    
+    return 0
+
+
+# =============================================================================
+# MAIN PIPELINE EXECUTION
+# =============================================================================
+
 def run_pipeline(config: PipelineConfig) -> int:
     """
     Execute the validation pipeline.
 
     This is the main function that runs the entire validation process.
-    It coordinates all the steps: validation, analysis, and reporting.
+    It coordinates all the steps: configuration loading, freeze state
+    checking, validation, and optional diagnostic execution.
+
+    EXECUTION FLOW:
+    1. Load configuration from thresholds.yaml
+    2. Check dataset freeze state
+    3. Validate input files
+    4. If --dry-run: exit after validation
+    5. If NOT frozen: exit with message
+    6. If frozen but NO --run-diagnostics: exit with message
+    7. If frozen AND --run-diagnostics: run diagnostics
 
     Args:
         config: The validated pipeline configuration.
@@ -332,28 +581,118 @@ def run_pipeline(config: PipelineConfig) -> int:
     print("=" * 60)
     print()
 
-    # STEP 1: Validate all input files before doing any analysis
-    # This ensures we catch problems early
+    # =========================================================================
+    # STEP 1: Load configuration from thresholds.yaml
+    # =========================================================================
+    print("Loading configuration...")
+    
+    try:
+        # Resolve config path relative to current working directory
+        config_path = Path.cwd() / DEFAULT_CONFIG_PATH
+        if not config_path.exists():
+            # Try relative to this file's location
+            config_path = Path(__file__).parent / "config" / "thresholds.yaml"
+        
+        week2_config = load_config(config_path)
+        print(f"  Configuration loaded from: {config_path.name}")
+        print(f"  dataset_frozen_required: {week2_config.dataset_frozen_required}")
+        print(f"  allow_real_data_analysis: {week2_config.allow_real_data_analysis}")
+    except ConfigError as e:
+        raise PipelineError(f"Failed to load configuration: {e}") from e
+    
+    print()
+
+    # =========================================================================
+    # STEP 2: Check dataset freeze state
+    # =========================================================================
+    print("Checking dataset freeze state...")
+    
+    # Resolve flag file path relative to current working directory
+    flag_file_path = Path.cwd() / DEFAULT_FLAG_FILE_PATH
+    if not flag_file_path.parent.exists():
+        # Try relative to this file's location
+        flag_file_path = Path(__file__).parent / ".frozen"
+    
+    freeze_state = check_freeze_state(flag_file_path)
+    
+    print(f"  Flag file path: {flag_file_path}")
+    print(f"  Freeze state: {'FROZEN' if freeze_state.is_frozen else 'NOT FROZEN'}")
+    print(f"  State source: {freeze_state.source}")
+    print()
+
+    # =========================================================================
+    # STEP 3: Validate all input files
+    # =========================================================================
+    print("Validating inputs...")
     validate_inputs(config)
     print()
 
-    # STEP 2: Check if this is a dry run (test mode)
+    # =========================================================================
+    # STEP 4: Handle --dry-run mode
+    # =========================================================================
     if config.dry_run:
         # In dry run mode, we only validate inputs - no actual analysis
-        print("Dry run mode: Input validation complete.")
-        print("No diagnostic analysis performed.")
+        print("=" * 60)
+        print("DRY RUN MODE")
+        print("=" * 60)
+        print("Input validation complete.")
+        print("No diagnostic analysis performed (--dry-run specified).")
         return 0  # Return 0 to indicate success
 
-    # STEP 3: If not a dry run, proceed with the full pipeline
-    print("Input validation complete.")
-    print("Pipeline is ready for diagnostic execution.")
+    # =========================================================================
+    # STEP 5: Check if dataset is frozen (required for any analysis)
+    # =========================================================================
+    if not freeze_state.is_frozen:
+        # Dataset is NOT frozen - cannot proceed with any analysis
+        print("=" * 60)
+        print("DATASET NOT FROZEN")
+        print("=" * 60)
+        print("The dataset is not yet frozen.")
+        print()
+        print("To run diagnostics, the dataset must first be frozen by:")
+        print(f"  1. Creating the flag file: {flag_file_path}")
+        print("  2. Or completing Week 1 data freeze process")
+        print()
+        print("Input validation completed successfully.")
+        print("No diagnostic analysis performed (dataset not frozen).")
+        return 0  # Exit cleanly (not an error, just a gate)
+
+    # =========================================================================
+    # STEP 6: Dataset is frozen - check if diagnostics were requested
+    # =========================================================================
+    if not config.run_diagnostics:
+        # Dataset is frozen, but --run-diagnostics flag was not provided
+        print("=" * 60)
+        print("DATASET FROZEN - DIAGNOSTICS NOT REQUESTED")
+        print("=" * 60)
+        print("The dataset is frozen and ready for analysis.")
+        print()
+        print("Input validation completed successfully.")
+        print()
+        print("To run diagnostic analysis, use the --run-diagnostics flag:")
+        print(f"  python -m week2_validation.run_week2 \\")
+        print(f"      --fusion-data {config.fusion_data_path} \\")
+        print(f"      --output-dir {config.output_dir} \\")
+        print(f"      --run-diagnostics")
+        return 0  # Exit cleanly (explicit request required)
+
+    # =========================================================================
+    # STEP 7: Dataset is frozen AND --run-diagnostics requested
+    # =========================================================================
+    print("=" * 60)
+    print("RUNNING DIAGNOSTICS")
+    print("=" * 60)
+    print("Dataset is frozen: YES")
+    print("Diagnostics requested: YES")
     print()
-    # Note: The actual analysis modules will be added in future development
-    print("Note: Diagnostic analysis modules not yet implemented.")
-    print("This entry point validates orchestration readiness only.")
+    
+    # Execute diagnostics (lazy import happens inside)
+    return execute_diagnostics(config, week2_config)
 
-    return 0  # Return 0 to indicate success
 
+# =============================================================================
+# MAIN ENTRY POINT
+# =============================================================================
 
 def main() -> int:
     """
@@ -397,6 +736,10 @@ def main() -> int:
         # Something went wrong during pipeline execution
         print(f"Pipeline error: {e}", file=sys.stderr)
         return 1  # Return 1 to indicate an error
+    except FreezeStateError as e:
+        # Freeze state issue
+        print(f"Freeze state error: {e}", file=sys.stderr)
+        return 1
     except KeyboardInterrupt:
         # User pressed Ctrl+C to stop the program
         print("\nPipeline interrupted by user.", file=sys.stderr)
