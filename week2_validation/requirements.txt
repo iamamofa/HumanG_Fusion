@@ -1,0 +1,52 @@
+# =============================================================================
+# Week 2 Validation Pipeline - Python Dependencies
+# =============================================================================
+# This file lists all dependencies required to run every implemented feature.
+# Dependencies are categorized by usage and requirement level.
+# =============================================================================
+
+# =============================================================================
+# REQUIRED - Core runtime (pipeline will not run without these)
+# =============================================================================
+
+# Tabular data loading, schema validation, fusion/COSMIC DataFrames
+# Used by: data_loader (load_fusion_data, load_reference_data), run_week2
+# Minimum: read_csv sep=, read_json, read_excel engine=, read_parquet
+pandas>=1.3.0
+
+# Numerical arrays for all diagnostic modules
+# Used by: distributions/visualize, distributions/log_normality, benford/diagnostics
+# Minimum: np.ndarray, np.log10, np.unique, default_rng (1.17+)
+numpy>=1.20.0
+
+# Histogram generation and descriptive visualization
+# Used by: distributions/visualize (run_diagnostics, generate_histogram)
+# Required when --run-diagnostics is used
+matplotlib>=3.4.0
+
+# Configuration loading from week2_validation/config/thresholds.yaml
+# Used by: config/loader (load_config)
+PyYAML>=5.4.0
+
+# =============================================================================
+# OPTIONAL - Statistical enhancements (graceful degradation)
+# =============================================================================
+# The pipeline operates without these; some statistics are omitted with notes.
+
+# Log-normality: Anderson-Darling statistic (without: AD not computed)
+# Benford: chi-squared p-value (without: p-value not computed)
+# Visualization: bias-corrected skewness (without: NumPy fallback used)
+scipy>=1.7.0
+
+# =============================================================================
+# OPTIONAL - File format support
+# =============================================================================
+# Required only when loading files in the corresponding format.
+
+# Excel (.xlsx, .xls) - data_loader uses engine="openpyxl" for read_excel
+# Install only if fusion or COSMIC input is Excel format
+openpyxl>=3.0.0
+
+# Parquet (.parquet) - pandas read_parquet default engine
+# Install only if fusion or COSMIC input is Parquet format
+pyarrow>=6.0.0

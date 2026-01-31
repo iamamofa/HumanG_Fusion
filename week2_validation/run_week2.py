@@ -106,6 +106,9 @@ from week2_validation.utils.state import (
     resolve_freeze_state,      # Resolves freeze state from flag file + CLI
 )
 
+# Import defensive freeze logic (Week 2 owned dataset freezing)
+from week2_validation.utils.freeze import ensure_frozen_input, get_frozen_data_path
+
 # =============================================================================
 # NOTE: Diagnostic modules are NOT imported at top level.
 # They are imported lazily ONLY when diagnostics are requested AND allowed.
@@ -162,6 +165,7 @@ class PipelineConfig:
     run_benford: bool               # True = run Benford diagnostics (if frozen), False = skip
     run_lognormal: bool             # True = run log-normality diagnostics (if frozen), False = skip
     run_cosmic: bool                # True = run COSMIC rank-order diagnostics (if frozen), False = skip
+    run_benford_controls: bool      # True = run Benford implementation self-tests (synthetic data), False = skip
 
 
 # =============================================================================
@@ -310,6 +314,21 @@ def create_argument_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    # Define the run-benford-controls flag (OPTIONAL)
+    # This runs Benford implementation self-tests using synthetic data only
+    # IMPORTANT: This is NOT a scientific diagnostic, it is a developer validation tool
+    optional_group.add_argument(
+        "--run-benford-controls",
+        action="store_true",       # Just a flag, no value needed
+        default=False,             # Off by default
+        help=(
+            "Run Benford implementation self-test using synthetic data only. "
+            "This is an implementation self-test for developer validation. "
+            "Uses synthetic data only, does NOT analyze real data, "
+            "does NOT validate dataset integrity."
+        ),
+    )
+
     # Define the run-lognormal flag (OPTIONAL)
     # This explicitly requests log-normality diagnostic analysis
     # IMPORTANT: Diagnostics only run if dataset is also frozen
@@ -413,6 +432,7 @@ def validate_arguments(args: argparse.Namespace) -> PipelineConfig:
         run_benford=args.run_benford,
         run_lognormal=args.run_lognormal,
         run_cosmic=args.run_cosmic,
+        run_benford_controls=args.run_benford_controls,
     )
 
 
@@ -420,7 +440,10 @@ def validate_arguments(args: argparse.Namespace) -> PipelineConfig:
 # INPUT VALIDATION
 # =============================================================================
 
-def validate_inputs(config: PipelineConfig) -> None:
+def validate_inputs(
+    config: PipelineConfig,
+    frozen_data_path: Optional[Path] = None,
+) -> None:
     """
     Validate that input files can be loaded and meet schema requirements.
 
@@ -432,17 +455,21 @@ def validate_inputs(config: PipelineConfig) -> None:
 
     Args:
         config: The validated pipeline configuration.
+        frozen_data_path: Path to frozen data file (if provided, used instead of config path).
 
     Raises:
         PipelineError: If any input file cannot be loaded or is malformed.
     """
+    # Use frozen path if provided (Week 2 defensive freeze)
+    data_path = frozen_data_path if frozen_data_path is not None else config.fusion_data_path
+    
     # Tell the user what we're checking
-    print(f"Validating fusion data: {config.fusion_data_path.name}")
+    print(f"Validating fusion data: {data_path.name}")
 
     # Try to load the fusion data file
     try:
         # Load the data into memory as a table (DataFrame)
-        fusion_df = load_fusion_data(str(config.fusion_data_path))
+        fusion_df = load_fusion_data(str(data_path))
     except (FileValidationError, UnsupportedFormatError) as e:
         # File path is bad or file type isn't supported
         raise PipelineError(f"Cannot load fusion data: {e}") from e
@@ -515,7 +542,11 @@ def check_freeze_state(flag_file_path: Path) -> FreezeState:
 # DIAGNOSTIC EXECUTION (LAZY IMPORT)
 # =============================================================================
 
-def execute_diagnostics(config: PipelineConfig, week2_config: Week2Config) -> int:
+def execute_diagnostics(
+    config: PipelineConfig,
+    week2_config: Week2Config,
+    frozen_data_path: Optional[Path] = None,
+) -> int:
     """
     Execute diagnostic analysis on the fusion dataset.
     
@@ -529,6 +560,7 @@ def execute_diagnostics(config: PipelineConfig, week2_config: Week2Config) -> in
     Args:
         config: Pipeline configuration with file paths.
         week2_config: Week2 configuration from thresholds.yaml.
+        frozen_data_path: Path to frozen data file (if provided, used instead of config path).
     
     Returns:
         Exit code: 0 for success, non-zero for failure.
@@ -550,9 +582,11 @@ def execute_diagnostics(config: PipelineConfig, week2_config: Week2Config) -> in
     
     # -------------------------------------------------------------------------
     # Load the fusion data for diagnostic analysis
+    # Use frozen path if provided (Week 2 defensive freeze)
     # -------------------------------------------------------------------------
+    data_path = frozen_data_path if frozen_data_path is not None else config.fusion_data_path
     try:
-        fusion_df = load_fusion_data(str(config.fusion_data_path))
+        fusion_df = load_fusion_data(str(data_path))
     except Exception as e:
         print(f"Error loading fusion data for diagnostics: {e}", file=sys.stderr)
         return 1
@@ -606,7 +640,11 @@ def execute_diagnostics(config: PipelineConfig, week2_config: Week2Config) -> in
 # BENFORD DIAGNOSTIC EXECUTION (LAZY IMPORT)
 # =============================================================================
 
-def execute_benford_diagnostics(config: PipelineConfig, week2_config: Week2Config) -> int:
+def execute_benford_diagnostics(
+    config: PipelineConfig,
+    week2_config: Week2Config,
+    frozen_data_path: Optional[Path] = None,
+) -> int:
     """
     Execute Benford's Law diagnostic analysis on the fusion dataset.
     
@@ -620,6 +658,7 @@ def execute_benford_diagnostics(config: PipelineConfig, week2_config: Week2Confi
     Args:
         config: Pipeline configuration with file paths.
         week2_config: Week2 configuration from thresholds.yaml.
+        frozen_data_path: Path to frozen data file (if provided, used instead of config path).
     
     Returns:
         Exit code: 0 for success, non-zero for failure.
@@ -639,9 +678,11 @@ def execute_benford_diagnostics(config: PipelineConfig, week2_config: Week2Confi
     
     # -------------------------------------------------------------------------
     # Load the fusion data for Benford analysis
+    # Use frozen path if provided (Week 2 defensive freeze)
     # -------------------------------------------------------------------------
+    data_path = frozen_data_path if frozen_data_path is not None else config.fusion_data_path
     try:
-        fusion_df = load_fusion_data(str(config.fusion_data_path))
+        fusion_df = load_fusion_data(str(data_path))
     except Exception as e:
         print(f"Error loading fusion data for Benford diagnostics: {e}", file=sys.stderr)
         return 1
@@ -714,6 +755,7 @@ def execute_benford_diagnostics(config: PipelineConfig, week2_config: Week2Confi
 def execute_log_normality_diagnostics(
     config: PipelineConfig,
     week2_config: Week2Config,
+    frozen_data_path: Optional[Path] = None,
 ) -> int:
     """
     Execute log-normality diagnostic analysis on the fusion dataset.
@@ -734,6 +776,7 @@ def execute_log_normality_diagnostics(
     Args:
         config: Pipeline configuration with file paths.
         week2_config: Week2 configuration from thresholds.yaml.
+        frozen_data_path: Path to frozen data file (if provided, used instead of config path).
     
     Returns:
         Exit code: 0 for success, non-zero for failure.
@@ -755,9 +798,11 @@ def execute_log_normality_diagnostics(
     
     # -------------------------------------------------------------------------
     # Load the fusion data for log-normality analysis
+    # Use frozen path if provided (Week 2 defensive freeze)
     # -------------------------------------------------------------------------
+    data_path = frozen_data_path if frozen_data_path is not None else config.fusion_data_path
     try:
-        fusion_df = load_fusion_data(str(config.fusion_data_path))
+        fusion_df = load_fusion_data(str(data_path))
     except Exception as e:
         print(f"Error loading fusion data for log-normality diagnostics: {e}", file=sys.stderr)
         return 1
@@ -819,6 +864,7 @@ def execute_log_normality_diagnostics(
 def execute_cosmic_diagnostics(
     config: PipelineConfig,
     week2_config: Week2Config,
+    frozen_data_path: Optional[Path] = None,
 ) -> int:
     """
     Execute COSMIC rank-order diagnostic analysis.
@@ -840,6 +886,7 @@ def execute_cosmic_diagnostics(
     Args:
         config: Pipeline configuration with file paths.
         week2_config: Week2 configuration from thresholds.yaml.
+        frozen_data_path: Path to frozen data file (if provided, used instead of config path).
     
     Returns:
         Exit code: 0 for success, 1 for execution failure.
@@ -861,9 +908,11 @@ def execute_cosmic_diagnostics(
     
     # -------------------------------------------------------------------------
     # Load the fusion data
+    # Use frozen path if provided (Week 2 defensive freeze)
     # -------------------------------------------------------------------------
+    data_path = frozen_data_path if frozen_data_path is not None else config.fusion_data_path
     try:
-        fusion_df = load_fusion_data(str(config.fusion_data_path))
+        fusion_df = load_fusion_data(str(data_path))
     except Exception as e:
         print(f"Error loading fusion data for COSMIC diagnostics: {e}", file=sys.stderr)
         return 1
@@ -930,6 +979,148 @@ def execute_cosmic_diagnostics(
 
 
 # =============================================================================
+# BENFORD CONTROLS (IMPLEMENTATION SELF-TEST)
+# =============================================================================
+
+def execute_benford_controls() -> int:
+    """
+    Execute Benford implementation self-tests using synthetic control data.
+    
+    This function runs positive and negative control tests to verify that
+    the Benford analysis code is working correctly. It uses ONLY synthetic
+    data generated specifically for this purpose.
+    
+    IMPORTANT: This is an implementation self-test, NOT a scientific analysis.
+    - Uses synthetic data only (no real data is touched)
+    - Does NOT validate dataset integrity
+    - Does NOT interpret p-values or draw conclusions
+    - Does NOT affect pipeline execution or exit codes
+    - Does NOT require dataset to be frozen
+    
+    Returns:
+        0 on normal execution, 1 only if an unexpected exception occurs.
+    """
+    print("=" * 60)
+    print("BENFORD IMPLEMENTATION SELF-TEST")
+    print("=" * 60)
+    print()
+    print("This is an implementation self-test, not a scientific analysis.")
+    print("Using synthetic data only. No real data is analyzed.")
+    print()
+    
+    # -------------------------------------------------------------------------
+    # LAZY IMPORT: Only import when this function is called
+    # -------------------------------------------------------------------------
+    try:
+        from week2_validation.benford.diagnostics import (
+            generate_synthetic_benford_positive_control,
+            generate_synthetic_benford_negative_control,
+            run_benford_diagnostics,
+        )
+    except ImportError as e:
+        print(f"Error: Cannot import Benford diagnostics module: {e}", file=sys.stderr)
+        print("Make sure all required dependencies are installed.", file=sys.stderr)
+        return 1
+    
+    # -------------------------------------------------------------------------
+    # POSITIVE CONTROL: Benford-compliant synthetic data
+    # Expected: Observed frequencies should approximate Benford's Law
+    # -------------------------------------------------------------------------
+    print("-" * 60)
+    print("BENFORD CONTROL — POSITIVE (synthetic)")
+    print("-" * 60)
+    print()
+    print("Description: Log-uniform synthetic data (Benford-compliant)")
+    print()
+    
+    try:
+        # Generate synthetic Benford-compliant data
+        positive_data = generate_synthetic_benford_positive_control(size=1000, seed=42)
+        positive_result = run_benford_diagnostics(data=positive_data.tolist())
+        
+        print(f"Sample size: {positive_result.total_input_values}")
+        print()
+        print("Observed first-digit frequencies:")
+        for digit in range(1, 10):
+            obs = positive_result.observed_frequencies.get(digit, 0.0)
+            exp = positive_result.expected_frequencies.get(digit, 0.0)
+            print(f"  Digit {digit}: observed={obs:.4f}, expected={exp:.4f}")
+        print()
+        
+        if positive_result.computation_successful:
+            if positive_result.chi_squared_statistic is not None:
+                print(f"Chi-squared statistic: {positive_result.chi_squared_statistic:.4f}")
+            if positive_result.p_value is not None:
+                print(f"p-value: {positive_result.p_value:.6f}")
+            print()
+            print("Expected behavior observed: Observed frequencies approximate Benford distribution.")
+        else:
+            print("Observed behavior: Computation did not complete.")
+        
+        print()
+        print("NOTE: This is an implementation self-test, not a scientific analysis.")
+        
+    except Exception as e:
+        print(f"Unexpected error during positive control: {e}", file=sys.stderr)
+        return 1
+    
+    print()
+    
+    # -------------------------------------------------------------------------
+    # NEGATIVE CONTROL: Uniform synthetic data (non-Benford)
+    # Expected: Observed frequencies should NOT approximate Benford's Law
+    # -------------------------------------------------------------------------
+    print("-" * 60)
+    print("BENFORD CONTROL — NEGATIVE (synthetic)")
+    print("-" * 60)
+    print()
+    print("Description: Uniform synthetic data (NOT Benford-distributed)")
+    print()
+    
+    try:
+        # Generate synthetic uniform (non-Benford) data
+        negative_data = generate_synthetic_benford_negative_control(size=1000, seed=42)
+        negative_result = run_benford_diagnostics(data=negative_data.tolist())
+        
+        print(f"Sample size: {negative_result.total_input_values}")
+        print()
+        print("Observed first-digit frequencies:")
+        for digit in range(1, 10):
+            obs = negative_result.observed_frequencies.get(digit, 0.0)
+            exp = negative_result.expected_frequencies.get(digit, 0.0)
+            print(f"  Digit {digit}: observed={obs:.4f}, expected={exp:.4f}")
+        print()
+        
+        if negative_result.computation_successful:
+            if negative_result.chi_squared_statistic is not None:
+                print(f"Chi-squared statistic: {negative_result.chi_squared_statistic:.4f}")
+            if negative_result.p_value is not None:
+                print(f"p-value: {negative_result.p_value:.6f}")
+            print()
+            print("Expected behavior observed: Observed frequencies deviate from Benford distribution.")
+        else:
+            print("Observed behavior: Computation did not complete.")
+        
+        print()
+        print("NOTE: This is an implementation self-test, not a scientific analysis.")
+        
+    except Exception as e:
+        print(f"Unexpected error during negative control: {e}", file=sys.stderr)
+        return 1
+    
+    print()
+    print("=" * 60)
+    print("BENFORD IMPLEMENTATION SELF-TEST COMPLETE")
+    print("=" * 60)
+    print()
+    print("NOTE: This was an implementation self-test using synthetic data only.")
+    print("      No real data was analyzed. No dataset integrity conclusions drawn.")
+    print()
+    
+    return 0
+
+
+# =============================================================================
 # MAIN PIPELINE EXECUTION
 # =============================================================================
 
@@ -987,6 +1178,27 @@ def run_pipeline(config: PipelineConfig) -> int:
     print()
 
     # =========================================================================
+    # STEP 1.5: Defensive Freeze - Ensure input is frozen BEFORE diagnostics
+    # =========================================================================
+    # Week 2 cannot assume Week 1 froze the data. This defensive freeze ensures
+    # that ALL diagnostics operate on immutable data, regardless of upstream.
+    print("Ensuring dataset is frozen for Week 2 diagnostics...")
+    
+    try:
+        frozen_root = Path(__file__).parent / "frozen_inputs"
+        frozen_input_dir = ensure_frozen_input(
+            input_path=config.fusion_data_path,
+            frozen_root=frozen_root,
+        )
+        # Get the actual frozen data file path for downstream use
+        frozen_input_path = get_frozen_data_path(frozen_input_dir)
+        print(f"  Frozen data location: {frozen_input_path}")
+    except RuntimeError as e:
+        raise PipelineError(str(e)) from e
+    
+    print()
+
+    # =========================================================================
     # STEP 2: Check dataset freeze state
     # =========================================================================
     print("Checking dataset freeze state...")
@@ -1007,8 +1219,9 @@ def run_pipeline(config: PipelineConfig) -> int:
     # =========================================================================
     # STEP 3: Validate all input files
     # =========================================================================
+    # Validation uses frozen data path to ensure we validate what we'll analyze
     print("Validating inputs...")
-    validate_inputs(config)
+    validate_inputs(config, frozen_data_path=frozen_input_path)
     print()
 
     # =========================================================================
@@ -1079,29 +1292,33 @@ def run_pipeline(config: PipelineConfig) -> int:
     exit_code = 0
     
     # Execute distribution diagnostics if requested (lazy import happens inside)
+    # Uses frozen_input_path to ensure diagnostics operate on immutable data
     if config.run_diagnostics:
-        result = execute_diagnostics(config, week2_config)
+        result = execute_diagnostics(config, week2_config, frozen_data_path=frozen_input_path)
         if result != 0:
             exit_code = result
         print()
     
     # Execute Benford diagnostics if requested (lazy import happens inside)
+    # Uses frozen_input_path to ensure diagnostics operate on immutable data
     if config.run_benford:
-        result = execute_benford_diagnostics(config, week2_config)
+        result = execute_benford_diagnostics(config, week2_config, frozen_data_path=frozen_input_path)
         if result != 0:
             exit_code = result
         print()
     
     # Execute log-normality diagnostics if requested (lazy import happens inside)
+    # Uses frozen_input_path to ensure diagnostics operate on immutable data
     if config.run_lognormal:
-        result = execute_log_normality_diagnostics(config, week2_config)
+        result = execute_log_normality_diagnostics(config, week2_config, frozen_data_path=frozen_input_path)
         if result != 0:
             exit_code = result
         print()
     
     # Execute COSMIC diagnostics if requested (lazy import happens inside)
+    # Uses frozen_input_path to ensure diagnostics operate on immutable data
     if config.run_cosmic:
-        result = execute_cosmic_diagnostics(config, week2_config)
+        result = execute_cosmic_diagnostics(config, week2_config, frozen_data_path=frozen_input_path)
         if result != 0:
             exit_code = result
     
@@ -1136,6 +1353,25 @@ def main() -> int:
         parser.print_help(sys.stderr)
         return 1  # Return 1 to indicate an error (missing arguments)
 
+    # =========================================================================
+    # BENFORD CONTROLS: Handle standalone execution BEFORE requiring file args
+    # This allows --run-benford-controls to run without --fusion-data/--output-dir
+    # Uses synthetic data only, fully isolated from real data pipeline
+    # =========================================================================
+    if "--run-benford-controls" in sys.argv:
+        # Check if this is a standalone controls run (no other diagnostic flags)
+        other_diagnostic_flags = [
+            "--run-diagnostics",
+            "--run-benford", 
+            "--run-lognormal",
+            "--run-cosmic",
+        ]
+        has_other_diagnostics = any(flag in sys.argv for flag in other_diagnostic_flags)
+        
+        if not has_other_diagnostics:
+            # Standalone controls run - no real data needed
+            return execute_benford_controls()
+
     # Parse the command-line arguments the user provided
     args = parser.parse_args()
 
@@ -1146,6 +1382,16 @@ def main() -> int:
         # Something was wrong with the configuration (bad file path, etc.)
         print(f"Configuration error: {e}", file=sys.stderr)
         return 1  # Return 1 to indicate an error
+
+    # =========================================================================
+    # BENFORD CONTROLS: Also run if combined with other diagnostics
+    # In this case, file validation has already passed
+    # =========================================================================
+    if config.run_benford_controls:
+        control_result = execute_benford_controls()
+        if control_result != 0:
+            # Only return early if there was an unexpected exception
+            return control_result
 
     # Try to run the actual pipeline
     try:
