@@ -16,6 +16,7 @@ When a user runs this program from the command line, this file:
 5. If diagnostics requested AND dataset is frozen, runs requested diagnostics:
    - --run-diagnostics: distribution diagnostics
    - --run-benford: Benford's Law diagnostics (diagnostic only, no inference)
+   - --run-lognormal: log-normality diagnostics (diagnostic only, no inference)
 6. Reports the results
 
 EXECUTION FLOW:
@@ -29,6 +30,7 @@ EXECUTION FLOW:
     │  7. If frozen but NO diagnostics requested: exit with message   │
     │  8. If frozen AND --run-diagnostics: run distribution diags     │
     │  9. If frozen AND --run-benford: run Benford diags              │
+    │ 10. If frozen AND --run-lognormal: run log-normality diags      │
     └─────────────────────────────────────────────────────────────────┘
 
 This pipeline is diagnostic only:
@@ -43,6 +45,7 @@ Usage:
         [--cosmic-data /path/to/cosmic.tsv] \\
         [--run-diagnostics] \\
         [--run-benford] \\
+        [--run-lognormal] \\
         [--dry-run]
 
 Security considerations:
@@ -148,6 +151,7 @@ class PipelineConfig:
         dry_run: If True, only check inputs without running full analysis.
         run_diagnostics: If True, run distribution diagnostics (requires frozen dataset).
         run_benford: If True, run Benford's Law diagnostics (requires frozen dataset).
+        run_lognormal: If True, run log-normality diagnostics (requires frozen dataset).
     """
 
     fusion_data_path: Path          # Where the fusion data file is located
@@ -156,6 +160,7 @@ class PipelineConfig:
     dry_run: bool                   # True = just validate, False = run full analysis
     run_diagnostics: bool           # True = run distribution diagnostics (if frozen), False = skip
     run_benford: bool               # True = run Benford diagnostics (if frozen), False = skip
+    run_lognormal: bool             # True = run log-normality diagnostics (if frozen), False = skip
 
 
 # =============================================================================
@@ -304,6 +309,20 @@ def create_argument_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    # Define the run-lognormal flag (OPTIONAL)
+    # This explicitly requests log-normality diagnostic analysis
+    # IMPORTANT: Diagnostics only run if dataset is also frozen
+    optional_group.add_argument(
+        "--run-lognormal",
+        action="store_true",       # Just a flag, no value needed
+        default=False,             # Off by default (explicit request required)
+        help=(
+            "Run log-normality diagnostic analysis on the dataset. "
+            "REQUIRES dataset to be frozen. "
+            "Diagnostic only: no inference, no pass/fail, no decisions."
+        ),
+    )
+
     # Define the dry-run flag (OPTIONAL)
     # When set, the program only checks inputs without running full analysis
     optional_group.add_argument(
@@ -377,6 +396,7 @@ def validate_arguments(args: argparse.Namespace) -> PipelineConfig:
         dry_run=args.dry_run,
         run_diagnostics=args.run_diagnostics,
         run_benford=args.run_benford,
+        run_lognormal=args.run_lognormal,
     )
 
 
@@ -672,6 +692,111 @@ def execute_benford_diagnostics(config: PipelineConfig, week2_config: Week2Confi
 
 
 # =============================================================================
+# LOG-NORMALITY DIAGNOSTIC EXECUTION (LAZY IMPORT)
+# =============================================================================
+
+def execute_log_normality_diagnostics(
+    config: PipelineConfig,
+    week2_config: Week2Config,
+) -> int:
+    """
+    Execute log-normality diagnostic analysis on the fusion dataset.
+    
+    This function performs a LAZY IMPORT of the log-normality diagnostic module
+    to avoid unnecessary dependencies when log-normality diagnostics aren't requested.
+    
+    IMPORTANT: This function should ONLY be called when:
+    - Dataset is frozen (already verified by caller)
+    - --run-lognormal flag is True (already verified by caller)
+    
+    DIAGNOSTIC-ONLY:
+    - No inference, thresholds, or decisions are made
+    - No files are saved
+    - No plots are generated
+    - Results are descriptive summaries only
+    
+    Args:
+        config: Pipeline configuration with file paths.
+        week2_config: Week2 configuration from thresholds.yaml.
+    
+    Returns:
+        Exit code: 0 for success, non-zero for failure.
+    """
+    print("Starting log-normality diagnostic analysis...")
+    print()
+    
+    # -------------------------------------------------------------------------
+    # LAZY IMPORT: Only import log-normality module when actually needed
+    # -------------------------------------------------------------------------
+    try:
+        from week2_validation.distributions.log_normality import (
+            run_log_normality_diagnostics,
+        )
+    except ImportError as e:
+        print(f"Error: Cannot import log-normality diagnostic module: {e}", file=sys.stderr)
+        print("Make sure all required dependencies are installed.", file=sys.stderr)
+        return 1
+    
+    # -------------------------------------------------------------------------
+    # Load the fusion data for log-normality analysis
+    # -------------------------------------------------------------------------
+    try:
+        fusion_df = load_fusion_data(str(config.fusion_data_path))
+    except Exception as e:
+        print(f"Error loading fusion data for log-normality diagnostics: {e}", file=sys.stderr)
+        return 1
+    
+    # -------------------------------------------------------------------------
+    # Extract protein_length column for analysis
+    # No assumptions about data format - just use what's in the required column
+    # -------------------------------------------------------------------------
+    if "protein_length" not in fusion_df.columns:
+        print("Error: 'protein_length' column not found in fusion data.", file=sys.stderr)
+        return 1
+    
+    protein_lengths = fusion_df["protein_length"].tolist()
+    
+    # -------------------------------------------------------------------------
+    # Run log-normality diagnostics (returns LogNormalityDiagnosticResult)
+    # Does NOT save files, does NOT produce plots
+    # -------------------------------------------------------------------------
+    try:
+        print(f"Running log-normality diagnostics on {len(protein_lengths)} protein length values...")
+        result = run_log_normality_diagnostics(data=protein_lengths)
+        
+        # Report results (no interpretation, just facts)
+        print()
+        print("Log-Normality Diagnostic Results:")
+        print(f"  Sample size: {result.sample_size}")
+        print(f"  SciPy available: {result.scipy_available}")
+        print(f"  Computation successful: {result.computation_successful}")
+        print()
+        
+        if result.computation_successful:
+            if result.ks_statistic is not None:
+                print(f"  KS statistic: {result.ks_statistic:.6f}")
+            else:
+                print("  KS statistic: not computed")
+            
+            if result.ad_statistic is not None:
+                print(f"  Anderson-Darling statistic: {result.ad_statistic:.6f}")
+            else:
+                print("  Anderson-Darling statistic: not computed (requires SciPy)")
+        
+        print()
+        print("Log-normality diagnostic analysis complete.")
+        print()
+        print("NOTE: Log-normality diagnostics are DESCRIPTIVE ONLY.")
+        print("No inference, thresholds, or data validity conclusions are drawn.")
+        
+    except Exception as e:
+        print(f"Error during log-normality diagnostic analysis: {e}", file=sys.stderr)
+        return 1
+    
+    return 0
+
+
+# =============================================================================
 # MAIN PIPELINE EXECUTION
 # =============================================================================
 
@@ -786,8 +911,8 @@ def run_pipeline(config: PipelineConfig) -> int:
     # =========================================================================
     # STEP 6: Dataset is frozen - check if any diagnostics were requested
     # =========================================================================
-    if not config.run_diagnostics and not config.run_benford:
-        # Dataset is frozen, but neither diagnostic flag was provided
+    if not config.run_diagnostics and not config.run_benford and not config.run_lognormal:
+        # Dataset is frozen, but no diagnostic flag was provided
         print("=" * 60)
         print("DATASET FROZEN - DIAGNOSTICS NOT REQUESTED")
         print("=" * 60)
@@ -800,7 +925,8 @@ def run_pipeline(config: PipelineConfig) -> int:
         print(f"      --fusion-data {config.fusion_data_path} \\")
         print(f"      --output-dir {config.output_dir} \\")
         print(f"      --run-diagnostics    # Distribution diagnostics")
-        print(f"      --run-benford        # Benford's Law diagnostics")
+        print(f"      --run-benford        # Benford's Law diagnostics (diagnostic only)")
+        print(f"      --run-lognormal      # Log-normality diagnostics (diagnostic only)")
         return 0  # Exit cleanly (explicit request required)
 
     # =========================================================================
@@ -812,6 +938,7 @@ def run_pipeline(config: PipelineConfig) -> int:
     print("Dataset is frozen: YES")
     print(f"Distribution diagnostics requested: {'YES' if config.run_diagnostics else 'NO'}")
     print(f"Benford diagnostics requested: {'YES' if config.run_benford else 'NO'}")
+    print(f"Log-normality diagnostics requested: {'YES' if config.run_lognormal else 'NO'}")
     print()
     
     exit_code = 0
@@ -826,6 +953,13 @@ def run_pipeline(config: PipelineConfig) -> int:
     # Execute Benford diagnostics if requested (lazy import happens inside)
     if config.run_benford:
         result = execute_benford_diagnostics(config, week2_config)
+        if result != 0:
+            exit_code = result
+        print()
+    
+    # Execute log-normality diagnostics if requested (lazy import happens inside)
+    if config.run_lognormal:
+        result = execute_log_normality_diagnostics(config, week2_config)
         if result != 0:
             exit_code = result
     
