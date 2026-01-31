@@ -161,6 +161,7 @@ class PipelineConfig:
     run_diagnostics: bool           # True = run distribution diagnostics (if frozen), False = skip
     run_benford: bool               # True = run Benford diagnostics (if frozen), False = skip
     run_lognormal: bool             # True = run log-normality diagnostics (if frozen), False = skip
+    run_cosmic: bool                # True = run COSMIC rank-order diagnostics (if frozen), False = skip
 
 
 # =============================================================================
@@ -323,6 +324,20 @@ def create_argument_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    # Define the run-cosmic flag (OPTIONAL)
+    # This explicitly requests COSMIC rank-order diagnostic analysis
+    # IMPORTANT: Diagnostics only run if dataset is also frozen
+    optional_group.add_argument(
+        "--run-cosmic",
+        action="store_true",       # Just a flag, no value needed
+        default=False,             # Off by default (explicit request required)
+        help=(
+            "Run COSMIC rank-order diagnostic analysis. "
+            "REQUIRES dataset to be frozen. "
+            "Diagnostic only: no inference, no validation, no statistical tests."
+        ),
+    )
+
     # Define the dry-run flag (OPTIONAL)
     # When set, the program only checks inputs without running full analysis
     optional_group.add_argument(
@@ -397,6 +412,7 @@ def validate_arguments(args: argparse.Namespace) -> PipelineConfig:
         run_diagnostics=args.run_diagnostics,
         run_benford=args.run_benford,
         run_lognormal=args.run_lognormal,
+        run_cosmic=args.run_cosmic,
     )
 
 
@@ -797,6 +813,123 @@ def execute_log_normality_diagnostics(
 
 
 # =============================================================================
+# COSMIC DIAGNOSTIC EXECUTION (LAZY IMPORT)
+# =============================================================================
+
+def execute_cosmic_diagnostics(
+    config: PipelineConfig,
+    week2_config: Week2Config,
+) -> int:
+    """
+    Execute COSMIC rank-order diagnostic analysis.
+    
+    This function performs a LAZY IMPORT of the COSMIC diagnostic module
+    to avoid unnecessary dependencies when COSMIC diagnostics aren't requested.
+    
+    IMPORTANT: This function should ONLY be called when:
+    - Dataset is frozen (already verified by caller)
+    - --run-cosmic flag is True (already verified by caller)
+    
+    DIAGNOSTIC-ONLY:
+    - No inference, thresholds, or decisions are made
+    - No files are saved
+    - No plots are generated
+    - No statistical tests are performed
+    - Results are descriptive summaries only
+    
+    Args:
+        config: Pipeline configuration with file paths.
+        week2_config: Week2 configuration from thresholds.yaml.
+    
+    Returns:
+        Exit code: 0 for success, 1 for execution failure.
+    """
+    print("Starting COSMIC rank-order diagnostic analysis...")
+    print()
+    
+    # -------------------------------------------------------------------------
+    # LAZY IMPORT: Only import COSMIC module when actually needed
+    # -------------------------------------------------------------------------
+    try:
+        from week2_validation.cosmic.diagnostics import (
+            run_cosmic_recurrence_diagnostic,
+        )
+    except ImportError as e:
+        print(f"Error: Cannot import COSMIC diagnostic module: {e}", file=sys.stderr)
+        print("Make sure all required dependencies are installed.", file=sys.stderr)
+        return 1
+    
+    # -------------------------------------------------------------------------
+    # Load the fusion data
+    # -------------------------------------------------------------------------
+    try:
+        fusion_df = load_fusion_data(str(config.fusion_data_path))
+    except Exception as e:
+        print(f"Error loading fusion data for COSMIC diagnostics: {e}", file=sys.stderr)
+        return 1
+    
+    # -------------------------------------------------------------------------
+    # Load COSMIC data (only if available)
+    # -------------------------------------------------------------------------
+    cosmic_df = None
+    if config.cosmic_data_path is not None:
+        try:
+            cosmic_df = load_reference_data(str(config.cosmic_data_path))
+        except Exception as e:
+            print(f"Warning: Could not load COSMIC data: {e}")
+            print("Proceeding with diagnostic (COSMIC data unavailable).")
+    else:
+        print("Note: No COSMIC data path provided (--cosmic-data).")
+        print("COSMIC diagnostic will report fusion data counts only.")
+    
+    # -------------------------------------------------------------------------
+    # Run COSMIC diagnostic (returns descriptive dict only)
+    # -------------------------------------------------------------------------
+    try:
+        print(f"Running COSMIC rank-order diagnostic...")
+        result = run_cosmic_recurrence_diagnostic(
+            fusion_df=fusion_df,
+            cosmic_df=cosmic_df,
+            top_n=10,
+        )
+        
+        # Report results (no interpretation, just facts)
+        print()
+        print("COSMIC Rank-Order Diagnostic Results:")
+        print(f"  Total fusion pairs (ours): {result['total_fusions_ours']}")
+        print(f"  Total fusion pairs (COSMIC): {result['total_fusions_cosmic']}")
+        print(f"  Overlapping pairs: {result['overlap_count']}")
+        print(f"  Only in ours: {result['only_in_ours_count']}")
+        print(f"  Only in COSMIC: {result['only_in_cosmic_count']}")
+        
+        # Report message if present
+        if "message" in result and result["message"]:
+            print()
+            print(f"  Note: {result['message']}")
+        
+        # Report top rank discrepancies
+        if result["top_rank_discrepancies"]:
+            print()
+            print("  Top rank discrepancies (by absolute rank difference):")
+            for i, disc in enumerate(result["top_rank_discrepancies"], 1):
+                print(f"    {i}. {disc['gene_1']}-{disc['gene_2']}: "
+                      f"our_rank={disc['our_rank']}, cosmic_rank={disc['cosmic_rank']}, "
+                      f"diff={disc['absolute_rank_difference']}")
+        
+        print()
+        print("COSMIC rank-order diagnostic analysis complete.")
+        print()
+        print("NOTE: COSMIC diagnostics are DESCRIPTIVE ONLY.")
+        print("No inference, no statistical tests, no validation conclusions are drawn.")
+        
+    except Exception as e:
+        print(f"Error during COSMIC diagnostic analysis: {e}", file=sys.stderr)
+        return 1
+    
+    return 0
+
+
+# =============================================================================
 # MAIN PIPELINE EXECUTION
 # =============================================================================
 
@@ -911,7 +1044,7 @@ def run_pipeline(config: PipelineConfig) -> int:
     # =========================================================================
     # STEP 6: Dataset is frozen - check if any diagnostics were requested
     # =========================================================================
-    if not config.run_diagnostics and not config.run_benford and not config.run_lognormal:
+    if not config.run_diagnostics and not config.run_benford and not config.run_lognormal and not config.run_cosmic:
         # Dataset is frozen, but no diagnostic flag was provided
         print("=" * 60)
         print("DATASET FROZEN - DIAGNOSTICS NOT REQUESTED")
@@ -927,6 +1060,7 @@ def run_pipeline(config: PipelineConfig) -> int:
         print(f"      --run-diagnostics    # Distribution diagnostics")
         print(f"      --run-benford        # Benford's Law diagnostics (diagnostic only)")
         print(f"      --run-lognormal      # Log-normality diagnostics (diagnostic only)")
+        print(f"      --run-cosmic         # COSMIC rank-order diagnostics (diagnostic only)")
         return 0  # Exit cleanly (explicit request required)
 
     # =========================================================================
@@ -939,6 +1073,7 @@ def run_pipeline(config: PipelineConfig) -> int:
     print(f"Distribution diagnostics requested: {'YES' if config.run_diagnostics else 'NO'}")
     print(f"Benford diagnostics requested: {'YES' if config.run_benford else 'NO'}")
     print(f"Log-normality diagnostics requested: {'YES' if config.run_lognormal else 'NO'}")
+    print(f"COSMIC diagnostics requested: {'YES' if config.run_cosmic else 'NO'}")
     print()
     
     exit_code = 0
@@ -960,6 +1095,13 @@ def run_pipeline(config: PipelineConfig) -> int:
     # Execute log-normality diagnostics if requested (lazy import happens inside)
     if config.run_lognormal:
         result = execute_log_normality_diagnostics(config, week2_config)
+        if result != 0:
+            exit_code = result
+        print()
+    
+    # Execute COSMIC diagnostics if requested (lazy import happens inside)
+    if config.run_cosmic:
+        result = execute_cosmic_diagnostics(config, week2_config)
         if result != 0:
             exit_code = result
     
