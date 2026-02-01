@@ -28,7 +28,9 @@ FREEZE ARTIFACTS:
 
 import hashlib
 import json
+import os
 import shutil
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -55,6 +57,21 @@ HASH_PREFIX_LENGTH = 12
 # Buffer size for file hashing (64KB)
 HASH_BUFFER_SIZE = 65536
 
+# Allowed characters in frozen filename (no path separators, no "..", no absolute)
+_FROZEN_FILENAME_SEPARATORS = frozenset(("/", "\\"))
+
+
+# =============================================================================
+# FREEZE-SPECIFIC EXCEPTION (for deterministic exit code classification)
+# =============================================================================
+
+class FreezeError(RuntimeError):
+    """
+    Raised when freeze operations fail (manifest, copy, validation).
+    Used by runtime/safe_runner for FREEZE_ERROR exit code; no message-based detection.
+    """
+    pass
+
 
 # =============================================================================
 # DATA STRUCTURES
@@ -79,6 +96,34 @@ class FreezeManifest:
 # INTERNAL HELPER FUNCTIONS
 # =============================================================================
 
+def _validate_manifest_original_filename(original_filename: str) -> None:
+    """
+    Validate manifest original_filename to prevent path traversal.
+
+    Must equal Path(original_filename).name; must NOT contain path separators,
+    "..", or absolute paths; must match expected frozen file name pattern.
+
+    Raises:
+        FreezeError: If original_filename is invalid (Invalid manifest filename).
+    """
+    if not isinstance(original_filename, str):
+        raise FreezeError("Invalid manifest filename")
+    if not original_filename or not original_filename.strip():
+        raise FreezeError("Invalid manifest filename")
+    if ".." in original_filename:
+        raise FreezeError("Invalid manifest filename")
+    if any(sep in original_filename for sep in _FROZEN_FILENAME_SEPARATORS):
+        raise FreezeError("Invalid manifest filename")
+    try:
+        p = Path(original_filename)
+    except (TypeError, ValueError):
+        raise FreezeError("Invalid manifest filename")
+    if p.is_absolute():
+        raise FreezeError("Invalid manifest filename")
+    if p.name != original_filename:
+        raise FreezeError("Invalid manifest filename")
+
+
 def _compute_file_hash(file_path: Path) -> str:
     """
     Compute SHA-256 hash of a file.
@@ -90,7 +135,7 @@ def _compute_file_hash(file_path: Path) -> str:
         Hexadecimal SHA-256 hash string.
     
     Raises:
-        RuntimeError: If file cannot be read or hashed.
+        FreezeError: If file cannot be read or hashed.
     """
     try:
         sha256_hash = hashlib.sha256()
@@ -99,7 +144,7 @@ def _compute_file_hash(file_path: Path) -> str:
                 sha256_hash.update(chunk)
         return sha256_hash.hexdigest()
     except (IOError, OSError) as e:
-        raise RuntimeError(f"Failed to compute hash for {file_path}: {e}") from e
+        raise FreezeError(f"Failed to compute hash for {file_path}: {e}") from e
 
 
 def _load_manifest(manifest_path: Path) -> Optional[FreezeManifest]:
@@ -119,28 +164,33 @@ def _load_manifest(manifest_path: Path) -> Optional[FreezeManifest]:
         with open(manifest_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         
+        original_filename = data.get("original_filename", "")
+        _validate_manifest_original_filename(original_filename)
+
         return FreezeManifest(
             source_path=data["source_path"],
             frozen_by=data["frozen_by"],
             frozen_at_utc=data["frozen_at_utc"],
             file_hash_sha256=data["file_hash_sha256"],
             week2_version=data["week2_version"],
-            original_filename=data.get("original_filename", ""),
+            original_filename=original_filename,
         )
+    except FreezeError:
+        raise
     except (json.JSONDecodeError, KeyError, IOError):
         return None
 
 
 def _write_manifest(manifest: FreezeManifest, manifest_path: Path) -> None:
     """
-    Write a freeze manifest to disk.
-    
+    Write a freeze manifest to disk atomically (temp file + rename).
+
     Args:
         manifest: The FreezeManifest to write.
         manifest_path: Path where manifest.json will be written.
-    
+
     Raises:
-        RuntimeError: If manifest cannot be written.
+        FreezeError: If manifest cannot be written.
     """
     manifest_dict = {
         "source_path": manifest.source_path,
@@ -150,12 +200,23 @@ def _write_manifest(manifest: FreezeManifest, manifest_path: Path) -> None:
         "week2_version": manifest.week2_version,
         "original_filename": manifest.original_filename,
     }
-    
+
     try:
-        with open(manifest_path, "w", encoding="utf-8") as f:
-            json.dump(manifest_dict, f, indent=2)
+        fd, tmp_path = tempfile.mkstemp(
+            prefix="manifest.", suffix=".json", dir=manifest_path.parent
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(manifest_dict, f, indent=2)
+            os.replace(tmp_path, manifest_path)
+        except BaseException:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
     except (IOError, OSError) as e:
-        raise RuntimeError(f"Failed to write manifest: {e}") from e
+        raise FreezeError(f"Failed to write manifest: {e}") from e
 
 
 def _find_existing_frozen_dir(
@@ -196,10 +257,13 @@ def _find_existing_frozen_dir(
         if not manifest_path.exists() or not marker_path.exists():
             continue
         
-        manifest = _load_manifest(manifest_path)
+        try:
+            manifest = _load_manifest(manifest_path)
+        except RuntimeError:
+            continue
         if manifest is None:
             continue
-        
+
         # Check if hash matches
         if manifest.file_hash_sha256 == current_hash:
             # Verify the frozen file still exists and matches
@@ -235,10 +299,13 @@ def _validate_frozen_snapshot(frozen_dir: Path) -> bool:
         return False
     
     # Load and validate manifest
-    manifest = _load_manifest(manifest_path)
+    try:
+        manifest = _load_manifest(manifest_path)
+    except FreezeError:
+        return False
     if manifest is None:
         return False
-    
+
     # Check frozen file exists
     frozen_file_path = frozen_dir / manifest.original_filename
     if not frozen_file_path.exists():
@@ -287,10 +354,10 @@ def ensure_frozen_input(
     # STEP 1: Validate input path
     # =========================================================================
     if not input_path.exists():
-        raise RuntimeError(f"Input file does not exist: {input_path}")
+        raise FreezeError(f"Input file does not exist: {input_path}")
     
     if not input_path.is_file():
-        raise RuntimeError(f"Input path is not a file: {input_path}")
+        raise FreezeError(f"Input path is not a file: {input_path}")
     
     # =========================================================================
     # STEP 2: Check for existing frozen snapshot
@@ -314,8 +381,8 @@ def ensure_frozen_input(
     # Compute hash of input file
     try:
         file_hash = _compute_file_hash(input_path)
-    except RuntimeError as e:
-        raise RuntimeError(f"ERROR: Failed to freeze dataset — diagnostics aborted: {e}") from e
+    except FreezeError as e:
+        raise FreezeError(f"ERROR: Failed to freeze dataset — diagnostics aborted: {e}") from e
     
     # Create frozen directory using hash prefix for deterministic naming
     hash_prefix = file_hash[:HASH_PREFIX_LENGTH]
@@ -325,7 +392,7 @@ def ensure_frozen_input(
     try:
         frozen_root.mkdir(parents=True, exist_ok=True)
     except (IOError, OSError) as e:
-        raise RuntimeError(f"ERROR: Failed to freeze dataset — diagnostics aborted: {e}") from e
+        raise FreezeError(f"ERROR: Failed to freeze dataset — diagnostics aborted: {e}") from e
     
     # Check if directory already exists (idempotency check)
     if frozen_dir.exists():
@@ -337,13 +404,13 @@ def ensure_frozen_input(
             try:
                 shutil.rmtree(frozen_dir)
             except (IOError, OSError) as e:
-                raise RuntimeError(f"ERROR: Failed to freeze dataset — diagnostics aborted: {e}") from e
+                raise FreezeError(f"ERROR: Failed to freeze dataset — diagnostics aborted: {e}") from e
     
     # Create frozen directory
     try:
         frozen_dir.mkdir(parents=True, exist_ok=True)
     except (IOError, OSError) as e:
-        raise RuntimeError(f"ERROR: Failed to freeze dataset — diagnostics aborted: {e}") from e
+        raise FreezeError(f"ERROR: Failed to freeze dataset — diagnostics aborted: {e}") from e
     
     # =========================================================================
     # STEP 4: Copy input file to frozen directory
@@ -357,20 +424,20 @@ def ensure_frozen_input(
         # Clean up partial freeze
         try:
             shutil.rmtree(frozen_dir)
-        except:
+        except Exception:
             pass
-        raise RuntimeError(f"ERROR: Failed to freeze dataset — diagnostics aborted: {e}") from e
+        raise FreezeError(f"ERROR: Failed to freeze dataset — diagnostics aborted: {e}") from e
     
     # Verify copy integrity
     try:
         copied_hash = _compute_file_hash(frozen_file_path)
         if copied_hash != file_hash:
             shutil.rmtree(frozen_dir)
-            raise RuntimeError("ERROR: Failed to freeze dataset — diagnostics aborted: Copy verification failed")
-    except RuntimeError:
+            raise FreezeError("ERROR: Failed to freeze dataset — diagnostics aborted: Copy verification failed")
+    except FreezeError:
         try:
             shutil.rmtree(frozen_dir)
-        except:
+        except Exception:
             pass
         raise
     
@@ -389,27 +456,38 @@ def ensure_frozen_input(
     manifest_path = frozen_dir / MANIFEST_FILENAME
     try:
         _write_manifest(manifest, manifest_path)
-    except RuntimeError as e:
+    except FreezeError as e:
         # Clean up partial freeze
         try:
             shutil.rmtree(frozen_dir)
-        except:
+        except Exception:
             pass
-        raise RuntimeError(f"ERROR: Failed to freeze dataset — diagnostics aborted: {e}") from e
+        raise FreezeError(f"ERROR: Failed to freeze dataset — diagnostics aborted: {e}") from e
     
     # =========================================================================
-    # STEP 6: Create .frozen marker file
+    # STEP 6: Create .frozen marker file (atomic write)
     # =========================================================================
     marker_path = frozen_dir / FROZEN_MARKER_FILENAME
     try:
-        marker_path.touch()
+        fd, tmp_marker = tempfile.mkstemp(
+            prefix=".frozen.", dir=frozen_dir
+        )
+        try:
+            os.close(fd)
+            os.replace(tmp_marker, marker_path)
+        except BaseException:
+            try:
+                os.unlink(tmp_marker)
+            except OSError:
+                pass
+            raise
     except (IOError, OSError) as e:
         # Clean up partial freeze
         try:
             shutil.rmtree(frozen_dir)
-        except:
+        except Exception:
             pass
-        raise RuntimeError(f"ERROR: Failed to freeze dataset — diagnostics aborted: {e}") from e
+        raise FreezeError(f"ERROR: Failed to freeze dataset — diagnostics aborted: {e}") from e
     
     # =========================================================================
     # STEP 7: Final validation and success
@@ -417,9 +495,9 @@ def ensure_frozen_input(
     if not _validate_frozen_snapshot(frozen_dir):
         try:
             shutil.rmtree(frozen_dir)
-        except:
+        except Exception:
             pass
-        raise RuntimeError("ERROR: Failed to freeze dataset — diagnostics aborted: Final validation failed")
+        raise FreezeError("ERROR: Failed to freeze dataset — diagnostics aborted: Final validation failed")
     
     print("Freeze complete — diagnostics may now proceed")
     
@@ -429,25 +507,36 @@ def ensure_frozen_input(
 def get_frozen_data_path(frozen_dir: Path) -> Path:
     """
     Get the path to the frozen data file within a frozen directory.
-    
+
+    Validates that the resolved data path remains under frozen_dir (root anchor).
+
     Args:
         frozen_dir: Path to the frozen directory.
-    
+
     Returns:
         Path to the frozen data file.
-    
+
     Raises:
-        RuntimeError: If frozen directory is invalid or data file not found.
+        RuntimeError: If frozen directory is invalid, data file not found,
+            or manifest filename is invalid (path traversal).
     """
     manifest_path = frozen_dir / MANIFEST_FILENAME
     manifest = _load_manifest(manifest_path)
-    
+
     if manifest is None:
-        raise RuntimeError(f"Cannot read manifest from frozen directory: {frozen_dir}")
-    
+        raise FreezeError(f"Cannot read manifest from frozen directory: {frozen_dir}")
+
     frozen_file_path = frozen_dir / manifest.original_filename
-    
+
     if not frozen_file_path.exists():
-        raise RuntimeError(f"Frozen data file not found: {frozen_file_path}")
-    
+        raise FreezeError(f"Frozen data file not found: {frozen_file_path}")
+
+    # Root anchor: resolved path must be inside frozen_dir (no escape via symlinks etc.)
+    try:
+        resolved = frozen_file_path.resolve()
+        base = frozen_dir.resolve()
+        resolved.relative_to(base)
+    except (OSError, ValueError):
+        raise FreezeError("Invalid manifest filename")
+
     return frozen_file_path

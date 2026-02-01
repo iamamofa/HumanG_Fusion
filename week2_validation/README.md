@@ -29,10 +29,14 @@ Week 2 provides a reproducible checkpoint for data integrity. It ensures that do
 ```
 week2_validation/
 │
+├── __init__.py           # Package root; exports __version__
 ├── run_week2.py          # Main program — run this to start the pipeline
 ├── README.md             # This documentation
 ├── requirements.txt      # Python packages needed to run
 ├── requirements.lock.txt # Locked dependency versions (reproducible installs)
+│
+├── adapters/             # Upstream format compatibility
+│   └── week1_adapter.py  # Converts Week 1 output to Week 2 schema (geneA/geneB → gene_1/gene_2)
 │
 ├── config/               # Settings and rules
 │   ├── thresholds.yaml   # Configuration (sample sizes, test settings, etc.)
@@ -42,6 +46,7 @@ week2_validation/
 │   └── fusion_schema.yaml   # Required columns and constraints for fusion data
 │
 ├── utils/                # Shared helpers
+│   ├── __init__.py       # Package init
 │   ├── data_loader.py    # Loads fusion and COSMIC data from files
 │   ├── freeze.py         # Creates the locked copy of your data
 │   └── state.py          # Checks if data is marked as "ready for analysis"
@@ -53,13 +58,19 @@ week2_validation/
 ├── benford/              # Benford's Law checks
 │   ├── diagnostics.py    # First-digit pattern analysis (--run-benford, --run-benford-controls)
 │   ├── benford_controls.py   # Test data generators (standalone)
-│   └── benford_test.py   # Benford test utilities (standalone)
+│   └── benford_test.py   # Chi-squared test utilities (standalone)
 │
 ├── cosmic/               # COSMIC comparison
 │   └── diagnostics.py    # Compare your fusion list to COSMIC (--run-cosmic)
 │
 ├── reporting/            # Structured output
-│   └── json_summary.py   # Writes week2_integrity_summary.json to output dir
+│   ├── json_summary.py   # Writes week2_integrity_summary.json to output dir
+│   └── status_envelope.py   # Builds machine-readable status envelope (version, exit_code, status)
+│
+├── runtime/              # Survivability layer
+│   ├── exit_codes.py     # Deterministic exit code contract (Week2ExitCode)
+│   ├── runtime_guard.py  # Lightweight runtime limits (duration, memory via psutil)
+│   └── safe_runner.py    # Atomic failure containment wrapper
 │
 ├── tests/                # Integration tests
 │   └── test_week2_integration.py   # Freeze, schema, SciPy optional, JSON summary
@@ -71,15 +82,25 @@ week2_validation/
 | Folder / File | Purpose |
 |---------------|---------|
 | `run_week2.py` | Entry point — the program you run |
+| `adapters/` | Week 1 format compatibility (geneA/geneB → gene_1/gene_2) |
 | `config/` | Configuration and thresholds |
 | `schemas/` | Input schema contracts (fusion_schema.yaml) |
 | `utils/` | File loading, freeze logic, state checks |
 | `distributions/` | Distribution and log-normality diagnostics |
-| `benford/` | Benford's Law diagnostics |
+| `benford/` | Benford's Law diagnostics and test utilities |
 | `cosmic/` | COSMIC database comparison |
-| `reporting/` | Structured JSON output (week2_integrity_summary.json) |
+| `reporting/` | Structured JSON output and status envelope |
+| `runtime/` | Exit codes, runtime guard, safe execution wrapper |
 | `tests/` | Integration tests (pytest) |
 | `frozen_inputs/` | Runtime directory for frozen dataset snapshots |
+
+### Dependencies (`requirements.txt` / `requirements.lock.txt`)
+
+- **Required:** pandas, numpy, matplotlib, PyYAML
+- **Optional (statistical):** scipy (graceful degradation if missing)
+- **Optional (file formats):** openpyxl (Excel), pyarrow (Parquet)
+- **Optional (runtime):** psutil (memory limit checks in `runtime_guard`)
+- **Development:** pytest
 
 ---
 
@@ -287,15 +308,17 @@ The original path may change (e.g., file overwritten) between validation and ana
 
 **Performs inference:** No. No statistical tests, correlations, or validation conclusions.
 
-### 6.6 Reporting (`reporting/json_summary.py`)
+### 6.6 Reporting (`reporting/`)
 
-**What it computes:** Writes a structured JSON file (`week2_integrity_summary.json`) to the output directory with run metadata and diagnostic results.
+**`json_summary.py`** — Writes a structured JSON file (`week2_integrity_summary.json`) to the output directory with run metadata and diagnostic results.
 
-**Required inputs:** `output_dir` (Path), `run_metadata` (dict with week2_version, run_timestamp_utc, dataset_hash), `diagnostic_results` (dict with diagnostics_run, results, notes).
+**`status_envelope.py`** — Builds a machine-readable status envelope with `week2_version`, `run_timestamp_utc`, `dataset_hash`, `diagnostics_run`, `exit_code`, and `status` (SUCCESS/FAILED/PARTIAL).
 
-**Optional dependencies:** None (uses stdlib `json`).
+**Required inputs (json_summary):** `output_dir` (Path), `run_metadata` (dict), `diagnostic_results` (dict).
 
-**Writes files:** Yes. Creates `week2_integrity_summary.json` in the output directory when invoked.
+**Optional dependencies:** None (uses stdlib `json` and `datetime`).
+
+**Writes files:** Yes. `json_summary` creates `week2_integrity_summary.json` in the output directory when invoked.
 
 **Performs inference:** No.
 
@@ -363,6 +386,7 @@ Week 3 must not bypass Week 2. The defensive freeze and freeze-state check ensur
 ### Implemented
 
 - CLI with `--fusion-data`, `--output-dir`, `--cosmic-data`, `--run-diagnostics`, `--run-benford`, `--run-lognormal`, `--run-cosmic`, `--run-benford-controls`, `--dry-run`
+- Week 1 adapter (`adapters/week1_adapter.py`) — maps geneA/geneB, recurrence_frequency/samples_detected to Week 2 schema
 - Configuration loading from `thresholds.yaml`
 - Schema contract in `schemas/fusion_schema.yaml` (required columns: `fusion_id`, `gene_1`, `gene_2`, `protein_length`, `recurrence_count`)
 - Defensive freeze via `ensure_frozen_input()` and `get_frozen_data_path()`
@@ -372,8 +396,10 @@ Week 3 must not bypass Week 2. The defensive freeze and freeze-state check ensur
 - Log-normality diagnostics (KS, optional Anderson-Darling)
 - Benford diagnostics (FSD distribution, chi-squared, applicability heuristic)
 - Benford controls (synthetic positive/negative)
+- Benford test utilities (`benford_test.py`) — chi-squared statistic and p-value
 - COSMIC rank-order diagnostic
-- Reporting module (`reporting/json_summary.py`) for structured JSON output
+- Reporting: `reporting/json_summary.py` (structured JSON output), `reporting/status_envelope.py` (status envelope)
+- Runtime layer: `runtime/exit_codes.py`, `runtime/runtime_guard.py`, `runtime/safe_runner.py`
 - Integration tests (`tests/test_week2_integration.py`) for freeze, schema, SciPy optional mode, JSON summary
 
 ### Runnable

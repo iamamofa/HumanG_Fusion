@@ -62,8 +62,12 @@ Security considerations:
 
 # 'argparse' helps read and understand command-line arguments (user instructions)
 import argparse
+# 'json' for writing status envelope
+import json
 # 'sys' provides access to system functions like exiting the program
 import sys
+# 'time' for runtime tracking
+import time
 # 'dataclass' creates simple classes for holding related data together
 from dataclasses import dataclass
 # 'Path' helps work with file and folder locations on the computer
@@ -80,12 +84,15 @@ from typing import Optional
 from week2_validation.utils.data_loader import (
     DataLoaderError,           # Error when data can't be read
     FileValidationError,       # Error when file path is invalid
+    REQUIRED_FUSION_FIELDS,    # Required column names for schema validation
     SchemaValidationError,     # Error when data is missing required columns
     UnsupportedFormatError,    # Error when file type isn't supported
+    load_data,                 # Raw data load (no schema check)
     load_fusion_data,          # Function to load the main fusion dataset
     load_reference_data,       # Function to load optional reference data
     validate_file_path,        # Function to check if a file path is valid
     validate_output_directory, # Function to check if output folder is valid
+    validate_schema,           # Schema validation for adapted data
 )
 
 # =============================================================================
@@ -107,7 +114,16 @@ from week2_validation.utils.state import (
 )
 
 # Import defensive freeze logic (Week 2 owned dataset freezing)
-from week2_validation.utils.freeze import ensure_frozen_input, get_frozen_data_path
+from week2_validation.utils.freeze import FreezeError, ensure_frozen_input, get_frozen_data_path
+
+# Survivability runtime layer
+from week2_validation.runtime.exit_codes import Week2ExitCode
+from week2_validation.runtime.runtime_guard import check_runtime_guard, start_runtime_guard
+from week2_validation.runtime.safe_runner import run_week2_safely
+from week2_validation.reporting.status_envelope import build_status_envelope
+
+# Week 1 compatibility adapter
+from week2_validation.adapters.week1_adapter import adapt_week1_dataframe
 
 # =============================================================================
 # NOTE: Diagnostic modules are NOT imported at top level.
@@ -126,6 +142,9 @@ DEFAULT_FLAG_FILE_PATH = Path("week2_validation/.frozen")
 
 # Default path to the configuration file
 DEFAULT_CONFIG_PATH = Path("week2_validation/config/thresholds.yaml")
+
+# Metadata for status envelope (set by run_pipeline)
+_run_metadata: dict = {}
 
 
 # =============================================================================
@@ -921,12 +940,15 @@ def execute_cosmic_diagnostics(
     # Load COSMIC data (only if available)
     # -------------------------------------------------------------------------
     cosmic_df = None
+    cosmic_reference_loaded = True  # True when no path provided or load succeeded
     if config.cosmic_data_path is not None:
         try:
             cosmic_df = load_reference_data(str(config.cosmic_data_path))
+            cosmic_reference_loaded = cosmic_df is not None
         except Exception as e:
             print(f"Warning: Could not load COSMIC data: {e}")
             print("Proceeding with diagnostic (COSMIC data unavailable).")
+            cosmic_reference_loaded = False
     else:
         print("Note: No COSMIC data path provided (--cosmic-data).")
         print("COSMIC diagnostic will report fusion data counts only.")
@@ -973,9 +995,9 @@ def execute_cosmic_diagnostics(
         
     except Exception as e:
         print(f"Error during COSMIC diagnostic analysis: {e}", file=sys.stderr)
-        return 1
+        return (1, cosmic_reference_loaded if config.cosmic_data_path is not None else True)
     
-    return 0
+    return (0, cosmic_reference_loaded if config.cosmic_data_path is not None else True)
 
 
 # =============================================================================
@@ -1193,35 +1215,32 @@ def run_pipeline(config: PipelineConfig) -> int:
         # Get the actual frozen data file path for downstream use
         frozen_input_path = get_frozen_data_path(frozen_input_dir)
         print(f"  Frozen data location: {frozen_input_path}")
-    except RuntimeError as e:
-        raise PipelineError(str(e)) from e
+    except FreezeError as e:
+        raise
     
     print()
 
     # =========================================================================
-    # STEP 2: Check dataset freeze state
+    # STEP 2: Week 1 adapter - convert to Week 2 schema if needed
     # =========================================================================
-    print("Checking dataset freeze state...")
-    
-    # Resolve flag file path relative to current working directory
-    flag_file_path = Path.cwd() / DEFAULT_FLAG_FILE_PATH
-    if not flag_file_path.parent.exists():
-        # Try relative to this file's location
-        flag_file_path = Path(__file__).parent / ".frozen"
-    
-    freeze_state = check_freeze_state(flag_file_path)
-    
-    print(f"  Flag file path: {flag_file_path}")
-    print(f"  Freeze state: {'FROZEN' if freeze_state.is_frozen else 'NOT FROZEN'}")
-    print(f"  State source: {freeze_state.source}")
-    print()
+    try:
+        raw_df = load_data(str(frozen_input_path))
+        adapted_df = adapt_week1_dataframe(raw_df)
+        validate_schema(adapted_df, REQUIRED_FUSION_FIELDS)
+        effective_data_path = frozen_input_path
+        if "geneA" in raw_df.columns or "geneB" in raw_df.columns or "samples_detected" in raw_df.columns or "recurrence_frequency" in raw_df.columns:
+            adapted_path = config.output_dir / "week2_adapted_fusion.csv"
+            adapted_df.to_csv(adapted_path, sep=",", index=False)
+            effective_data_path = adapted_path
+            print("  Week 1 format detected; adapted data written for diagnostics")
+    except ValueError as e:
+        raise PipelineError(f"Input schema adaptation failed: {e}") from e
 
     # =========================================================================
     # STEP 3: Validate all input files
     # =========================================================================
-    # Validation uses frozen data path to ensure we validate what we'll analyze
     print("Validating inputs...")
-    validate_inputs(config, frozen_data_path=frozen_input_path)
+    validate_inputs(config, frozen_data_path=effective_data_path)
     print()
 
     # =========================================================================
@@ -1237,25 +1256,7 @@ def run_pipeline(config: PipelineConfig) -> int:
         return 0  # Return 0 to indicate success
 
     # =========================================================================
-    # STEP 5: Check if dataset is frozen (required for any analysis)
-    # =========================================================================
-    if not freeze_state.is_frozen:
-        # Dataset is NOT frozen - cannot proceed with any analysis
-        print("=" * 60)
-        print("DATASET NOT FROZEN")
-        print("=" * 60)
-        print("The dataset is not yet frozen.")
-        print()
-        print("To run diagnostics, the dataset must first be frozen by:")
-        print(f"  1. Creating the flag file: {flag_file_path}")
-        print("  2. Or completing Week 1 data freeze process")
-        print()
-        print("Input validation completed successfully.")
-        print("No diagnostic analysis performed (dataset not frozen).")
-        return 0  # Exit cleanly (not an error, just a gate)
-
-    # =========================================================================
-    # STEP 6: Dataset is frozen - check if any diagnostics were requested
+    # STEP 5: Dataset frozen (automatic) - check if any diagnostics were requested
     # =========================================================================
     if not config.run_diagnostics and not config.run_benford and not config.run_lognormal and not config.run_cosmic:
         # Dataset is frozen, but no diagnostic flag was provided
@@ -1282,46 +1283,67 @@ def run_pipeline(config: PipelineConfig) -> int:
     print("=" * 60)
     print("RUNNING DIAGNOSTICS")
     print("=" * 60)
-    print("Dataset is frozen: YES")
+    print("Dataset frozen (automatic): YES")
     print(f"Distribution diagnostics requested: {'YES' if config.run_diagnostics else 'NO'}")
     print(f"Benford diagnostics requested: {'YES' if config.run_benford else 'NO'}")
     print(f"Log-normality diagnostics requested: {'YES' if config.run_lognormal else 'NO'}")
     print(f"COSMIC diagnostics requested: {'YES' if config.run_cosmic else 'NO'}")
     print()
-    
+
+    global _run_metadata
+    _run_metadata = {
+        "dataset_hash": frozen_input_dir.name,
+        "diagnostics_run": [n for n, f in [
+            ("diagnostics", config.run_diagnostics),
+            ("benford", config.run_benford),
+            ("lognormal", config.run_lognormal),
+            ("cosmic", config.run_cosmic),
+        ] if f],
+    }
+
     exit_code = 0
-    
+
     # Execute distribution diagnostics if requested (lazy import happens inside)
     # Uses frozen_input_path to ensure diagnostics operate on immutable data
     if config.run_diagnostics:
-        result = execute_diagnostics(config, week2_config, frozen_data_path=frozen_input_path)
+        check_runtime_guard()
+        result = execute_diagnostics(config, week2_config, frozen_data_path=effective_data_path)
+        check_runtime_guard()
         if result != 0:
             exit_code = result
         print()
-    
+
     # Execute Benford diagnostics if requested (lazy import happens inside)
     # Uses frozen_input_path to ensure diagnostics operate on immutable data
     if config.run_benford:
-        result = execute_benford_diagnostics(config, week2_config, frozen_data_path=frozen_input_path)
+        check_runtime_guard()
+        result = execute_benford_diagnostics(config, week2_config, frozen_data_path=effective_data_path)
+        check_runtime_guard()
         if result != 0:
             exit_code = result
         print()
-    
+
     # Execute log-normality diagnostics if requested (lazy import happens inside)
     # Uses frozen_input_path to ensure diagnostics operate on immutable data
     if config.run_lognormal:
-        result = execute_log_normality_diagnostics(config, week2_config, frozen_data_path=frozen_input_path)
+        check_runtime_guard()
+        result = execute_log_normality_diagnostics(config, week2_config, frozen_data_path=effective_data_path)
+        check_runtime_guard()
         if result != 0:
             exit_code = result
         print()
-    
+
     # Execute COSMIC diagnostics if requested (lazy import happens inside)
     # Uses frozen_input_path to ensure diagnostics operate on immutable data
     if config.run_cosmic:
-        result = execute_cosmic_diagnostics(config, week2_config, frozen_data_path=frozen_input_path)
-        if result != 0:
-            exit_code = result
-    
+        check_runtime_guard()
+        result_code, cosmic_loaded = execute_cosmic_diagnostics(config, week2_config, frozen_data_path=effective_data_path)
+        check_runtime_guard()
+        if result_code != 0:
+            exit_code = result_code
+        if config.cosmic_data_path is not None:
+            _run_metadata["cosmic_reference_loaded"] = cosmic_loaded
+
     return exit_code
 
 
@@ -1393,21 +1415,37 @@ def main() -> int:
             # Only return early if there was an unexpected exception
             return control_result
 
-    # Try to run the actual pipeline
+    # Run pipeline with survivability layer
+    start_runtime_guard()
+    start_time = time.monotonic()
+    exit_code, status_msg = run_week2_safely(run_pipeline, config)
+    check_runtime_guard()
+    runtime_seconds = time.monotonic() - start_time
+
+    # Always write status envelope
+    meta = _run_metadata
+    notes = [status_msg] if status_msg and status_msg != "OK" else []
+    if meta.get("cosmic_reference_loaded") is False:
+        notes.append("COSMIC_LOAD_FAILED")
+    envelope = build_status_envelope(
+        dataset_hash=meta.get("dataset_hash", ""),
+        diagnostics_run=meta.get("diagnostics_run", []),
+        exit_code=exit_code,
+        notes=notes,
+        cosmic_reference_loaded=meta.get("cosmic_reference_loaded"),
+    )
+    envelope["runtime_seconds"] = round(runtime_seconds, 2)
+    status_path = config.output_dir / "week2_status.json"
     try:
-        return run_pipeline(config)
-    except PipelineError as e:
-        # Something went wrong during pipeline execution
-        print(f"Pipeline error: {e}", file=sys.stderr)
-        return 1  # Return 1 to indicate an error
-    except FreezeStateError as e:
-        # Freeze state issue
-        print(f"Freeze state error: {e}", file=sys.stderr)
-        return 1
-    except KeyboardInterrupt:
-        # User pressed Ctrl+C to stop the program
-        print("\nPipeline interrupted by user.", file=sys.stderr)
-        return 130  # Standard exit code for keyboard interrupt
+        with open(status_path, "w", encoding="utf-8") as f:
+            json.dump(envelope, f, indent=2)
+        print(f"Status written to {status_path}")
+    except OSError as e:
+        print(f"Could not write status file: {e}", file=sys.stderr)
+        exit_code = int(Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR)
+        return exit_code
+
+    return exit_code
 
 
 # This block only runs when the file is executed directly (not imported)

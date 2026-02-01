@@ -17,3 +17,9 @@ scipy==1.11.4
 # OPTIONAL - File format support
 openpyxl==3.1.2
 pyarrow==14.0.1
+
+# OPTIONAL - Runtime monitoring (runtime/runtime_guard.py)
+psutil==6.1.0
+
+# DEVELOPMENT - Integration tests
+pytest==7.4.4

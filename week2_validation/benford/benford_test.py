@@ -23,6 +23,9 @@ import math
 # 'Counter' is a tool that counts how many times each item appears in a list
 from collections import Counter
 
+# Overflow guard for p-value series: cap term magnitude to avoid OverflowError
+FLOAT_SAFE_LIMIT = 1e300
+
 
 def chi_squared_statistic(observed, expected):
     """
@@ -90,16 +93,20 @@ def chi_squared_p_value(chi2, degrees_of_freedom):
     NOTE: This is an approximation used for diagnostic purposes only,
     not for making scientific claims or formal statistical inference.
     """
-    # These transformations convert our values into a format needed
-    # for the mathematical approximation
     k = degrees_of_freedom / 2.0
     x = chi2 / 2.0
-    
-    # This formula approximates the probability using a mathematical series.
-    # The math is based on the relationship between chi-squared distribution
-    # and the gamma function (an advanced calculus concept).
-    # For our diagnostic purposes, this approximation is sufficient.
-    return math.exp(-x) * sum((x ** i) / math.factorial(i) for i in range(int(k)))
+
+    # Series sum with overflow guard: if term exceeds FLOAT_SAFE_LIMIT, stop to avoid OverflowError
+    total = 0.0
+    for i in range(int(k)):
+        try:
+            term = (x ** i) / math.factorial(i)
+        except (OverflowError, ValueError):
+            break
+        if not math.isfinite(term) or term > FLOAT_SAFE_LIMIT:
+            break
+        total += term
+    return math.exp(-x) * total
 
 
 def expected_benford_distribution(n):

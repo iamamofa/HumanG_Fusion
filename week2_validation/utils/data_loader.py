@@ -92,9 +92,21 @@ class SchemaValidationError(DataLoaderError):
 # All the file extensions (types) that we know how to read
 SUPPORTED_EXTENSIONS: Set[str] = {".csv", ".tsv", ".json", ".parquet", ".xlsx", ".xls"}
 
-# The columns that MUST be present in fusion data files
+# The columns that MUST be present in fusion data files (matches schema fusion_schema.yaml)
 # Without these columns, we cannot perform the validation analysis
-REQUIRED_FUSION_FIELDS: Set[str] = {"fusion_id", "protein_length", "recurrence_count"}
+REQUIRED_FUSION_FIELDS: Set[str] = {
+    "fusion_id",
+    "gene_1",
+    "gene_2",
+    "protein_length",
+    "recurrence_count",
+}
+
+# Memory exhaustion protection: max file size before load (default 2GB)
+MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024 * 1024
+# CSV/TSV row estimate: avg bytes per row for guard; reject if estimated rows exceed
+AVG_CSV_ROW_BYTES = 200
+MAX_ESTIMATED_CSV_ROWS = 50_000_000
 
 
 def validate_file_path(file_path: str, must_exist: bool = True) -> Path:
@@ -313,6 +325,29 @@ def validate_schema(df: pd.DataFrame, required_fields: Set[str]) -> None:
 # ----- FILE FORMAT LOADERS -----
 # Each function below reads a specific file type and returns the data as a table
 
+def _check_file_size_and_csv_rows(file_path: Path, extension: str) -> None:
+    """
+    Enforce file size and (for CSV/TSV) row estimate guards before load.
+
+    Raises:
+        DataLoaderError: If file exceeds MAX_FILE_SIZE_BYTES or estimated rows exceed limit.
+    """
+    try:
+        size = file_path.stat().st_size
+    except OSError as e:
+        raise DataLoaderError(f"Cannot stat file: {e}") from e
+    if size > MAX_FILE_SIZE_BYTES:
+        raise DataLoaderError(
+            f"File size {size} exceeds maximum allowed {MAX_FILE_SIZE_BYTES} bytes"
+        )
+    if extension in (".csv", ".tsv"):
+        estimated_rows = size // AVG_CSV_ROW_BYTES
+        if estimated_rows > MAX_ESTIMATED_CSV_ROWS:
+            raise DataLoaderError(
+                f"Estimated CSV/TSV rows ({estimated_rows}) exceed limit {MAX_ESTIMATED_CSV_ROWS}"
+            )
+
+
 def load_csv(file_path: Path) -> pd.DataFrame:
     """
     Load a CSV (Comma-Separated Values) file into a data table.
@@ -332,6 +367,7 @@ def load_csv(file_path: Path) -> pd.DataFrame:
     Raises:
         DataLoaderError: If the file is empty or cannot be read.
     """
+    _check_file_size_and_csv_rows(file_path, ".csv")
     try:
         # 'low_memory=False' helps with large files containing mixed data types
         return pd.read_csv(file_path, low_memory=False)
@@ -357,6 +393,7 @@ def load_tsv(file_path: Path) -> pd.DataFrame:
     Raises:
         DataLoaderError: If the file is empty or cannot be read.
     """
+    _check_file_size_and_csv_rows(file_path, ".tsv")
     try:
         # sep="\t" tells pandas to use tab characters as separators
         return pd.read_csv(file_path, sep="\t", low_memory=False)
@@ -384,6 +421,14 @@ def load_json(file_path: Path) -> pd.DataFrame:
         DataLoaderError: If the file cannot be read or isn't valid JSON.
     """
     try:
+        size = file_path.stat().st_size
+    except OSError as e:
+        raise DataLoaderError(f"Cannot stat file: {e}") from e
+    if size > MAX_FILE_SIZE_BYTES:
+        raise DataLoaderError(
+            f"File size {size} exceeds maximum allowed {MAX_FILE_SIZE_BYTES} bytes"
+        )
+    try:
         return pd.read_json(file_path)
     except ValueError as e:
         raise DataLoaderError(f"JSON parsing error: {e}") from e
@@ -407,6 +452,14 @@ def load_parquet(file_path: Path) -> pd.DataFrame:
         DataLoaderError: If the file cannot be read.
     """
     try:
+        size = file_path.stat().st_size
+    except OSError as e:
+        raise DataLoaderError(f"Cannot stat file: {e}") from e
+    if size > MAX_FILE_SIZE_BYTES:
+        raise DataLoaderError(
+            f"File size {size} exceeds maximum allowed {MAX_FILE_SIZE_BYTES} bytes"
+        )
+    try:
         return pd.read_parquet(file_path)
     except Exception as e:
         raise DataLoaderError(f"Parquet reading error: {e}") from e
@@ -429,6 +482,14 @@ def load_excel(file_path: Path) -> pd.DataFrame:
     Raises:
         DataLoaderError: If the file cannot be read.
     """
+    try:
+        size = file_path.stat().st_size
+    except OSError as e:
+        raise DataLoaderError(f"Cannot stat file: {e}") from e
+    if size > MAX_FILE_SIZE_BYTES:
+        raise DataLoaderError(
+            f"File size {size} exceeds maximum allowed {MAX_FILE_SIZE_BYTES} bytes"
+        )
     try:
         # 'engine="openpyxl"' specifies which library to use for reading Excel
         return pd.read_excel(file_path, engine="openpyxl")
