@@ -64,7 +64,7 @@ week2_validation/
 │   └── diagnostics.py    # Compare your fusion list to COSMIC (--run-cosmic)
 │
 ├── reporting/            # Structured output
-│   ├── json_summary.py   # Writes week2_integrity_summary.json to output dir
+│   ├── json_summary.py   # Optional: writes week2_integrity_summary.json when invoked (not called by default pipeline)
 │   ├── status_envelope.py   # Builds machine-readable status envelope (version, exit_code, status)
 │   └── approved_dataset_writer.py   # Writes week2_cleaned_dataset.csv and week2_dataset_certification.json
 │
@@ -76,7 +76,7 @@ week2_validation/
 ├── tests/                # Integration tests
 │   └── test_week2_integration.py   # Freeze, schema, SciPy optional, JSON summary
 │
-├── sim_out/              # Runtime: pipeline output (when used as --output-dir; week2_*.csv, week2_*.json)
+├── outputs/              # Runtime: pipeline output (user-specified via --output-dir)
 │
 └── frozen_inputs/        # Runtime: immutable dataset snapshots (created on run)
     └── <hash_prefix>/    # One dir per frozen input (hash-based)
@@ -95,7 +95,7 @@ week2_validation/
 | `reporting/` | Structured JSON output, status envelope, approved dataset writer |
 | `runtime/` | Exit codes, runtime guard, safe execution wrapper |
 | `tests/` | Integration tests (pytest) |
-| `sim_out/` | Runtime pipeline output directory (week2_*.csv, week2_*.json) |
+| `outputs/` (or user-specified) | Runtime pipeline output directory (week2_status.json, week2_cleaned_dataset.csv, week2_dataset_certification.json) |
 | `frozen_inputs/` | Runtime directory for frozen dataset snapshots (created on first run; safe to delete to clear old snapshots) |
 
 **Using real data:** Point `--fusion-data` to your fusion CSV and `--output-dir` to where you want outputs. The pipeline creates `frozen_inputs/` automatically when it runs (one snapshot per input file). No simulation or test artifacts are required.
@@ -333,17 +333,17 @@ The original path may change (e.g., file overwritten) between validation and ana
 
 ### 6.6 Reporting (`reporting/`)
 
-**`json_summary.py`** — Writes a structured JSON file (`week2_integrity_summary.json`) to the output directory with run metadata and diagnostic results.
+**`json_summary.py`** — Provides `write_week2_summary_json()` to write a structured JSON file (`week2_integrity_summary.json`) when explicitly invoked. The main pipeline does not call this; it is available for optional use.
 
-**`status_envelope.py`** — Builds a machine-readable status envelope with `week2_version`, `run_timestamp_utc`, `dataset_hash`, `diagnostics_run`, `exit_code`, and `status` (SUCCESS/FAILED/PARTIAL).
+**`status_envelope.py`** — Builds the machine-readable status envelope with `week2_version`, `run_timestamp_utc`, `dataset_hash`, `diagnostics_run`, `exit_code`, and `status` (SUCCESS/FAILED/PARTIAL). Written as `week2_status.json` to the output directory on every run.
 
-**`approved_dataset_writer.py`** — When validation succeeds, optionally writes `week2_cleaned_dataset.csv` (copy of frozen validated dataset) and `week2_dataset_certification.json` (certification record for power-law modeling) to the output directory. Additive only; does not affect pipeline success/failure.
+**`approved_dataset_writer.py`** — When validation succeeds, writes `week2_cleaned_dataset.csv` (copy of frozen validated dataset) and `week2_dataset_certification.json` (certification record for power-law modeling) to the output directory. Additive only; does not affect pipeline success/failure.
 
-**Required inputs (json_summary):** `output_dir` (Path), `run_metadata` (dict), `diagnostic_results` (dict).
+**Required inputs (json_summary, when invoked):** `output_dir` (Path), `run_metadata` (dict), `diagnostic_results` (dict).
 
 **Optional dependencies:** None (uses stdlib `json` and `datetime`).
 
-**Writes files:** Yes. `json_summary` creates `week2_integrity_summary.json` in the output directory when invoked.
+**Writes files:** `status_envelope` and `approved_dataset_writer` are invoked by the pipeline. `json_summary` writes only when explicitly called.
 
 **Performs inference:** No.
 
@@ -441,5 +441,5 @@ Week 3 must not bypass Week 2. The defensive freeze and freeze-state check ensur
 
 - Stdout output: validation messages, diagnostic statistics, disclaimers.
 - Frozen snapshot directory under `week2_validation/frozen_inputs/<hash_prefix>/` when freeze is performed.
-- Output directory (e.g. `sim_out/`): `week2_adapted_fusion.csv`, `week2_cleaned_dataset.csv`, `week2_dataset_certification.json`, `week2_status.json`, `week2_integrity_summary.json` when the pipeline writes them.
+- Output directory (user-specified via `--output-dir`): `week2_status.json` (every run), `week2_cleaned_dataset.csv` and `week2_dataset_certification.json` (on success), `week2_adapted_fusion.csv` (when Week 1 format is detected).
 - No files written by diagnostic modules (no plots, no reports).
