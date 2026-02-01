@@ -1,0 +1,24 @@
+# Normalize all text files to LF in repo
+* text=auto
+
+# Python source must stay LF
+*.py text eol=lf
+
+# Shell scripts must stay LF (Linux safe)
+*.sh text eol=lf
+
+# YAML / JSON configs
+*.yaml text eol=lf
+*.yml text eol=lf
+*.json text eol=lf
+
+# Data files — do NOT modify line endings automatically
+*.csv -text
+*.tsv -text
+
+# Binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.parquet binary
+*.xlsx binary
