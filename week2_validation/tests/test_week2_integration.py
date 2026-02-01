@@ -6,7 +6,7 @@ JSON summary structure, null policy, path traversal hardening, parallel freeze,
 status envelope sanitization, and resource limit guards. Non-destructive, diagnostic-only.
 
 Stress test documentation:
-- File size near 10GB: Not run (would require large files). Guards tested via mocked stat.
+- File size near 5GB: Not run (would require large files). Guards tested via mocked stat.
 - Row count near 200M: Not run (would require ~40GB CSV). Guards fire at limit.
 - Memory near 8GB: Runtime guard fires when psutil reports >8GB RSS.
 - Parallel invocations: test_parallel_freeze_safety uses threading.
@@ -251,7 +251,7 @@ def test_resource_limit_guards_reject_estimated_rows_exceeded():
         f.flush()
         path = Path(f.name)
     try:
-        # Size under file limit but estimated rows > MAX (50GB > 10GB file limit;
+        # Size under file limit but estimated rows > MAX (50GB > 5GB file limit;
         # patch file limit so row limit fires)
         import week2_validation.utils.data_loader as dl
 
@@ -376,3 +376,242 @@ def test_json_summary_structure_contains_required_keys():
         required_keys = {"week2_version", "run_timestamp_utc", "dataset_hash", "diagnostics_run", "results", "notes"}
         for key in required_keys:
             assert key in data, f"Missing required key: {key}"
+
+
+# -----------------------------------------------------------------------------
+# Test 13 — Gene Symbol Normalization (COSMIC)
+# -----------------------------------------------------------------------------
+def test_gene_normalization_alk_lowercase():
+    """'alk' -> 'ALK'"""
+    from week2_validation.cosmic.diagnostics import run_cosmic_recurrence_diagnostic
+
+    fusion_df = pd.DataFrame({
+        "gene_1": ["alk"], "gene_2": ["EML4"], "recurrence_count": [10],
+    })
+    cosmic_df = pd.DataFrame({
+        "gene_1": ["ALK"], "gene_2": ["EML4"], "recurrence_count": [10],
+    })
+    result = run_cosmic_recurrence_diagnostic(fusion_df=fusion_df, cosmic_df=cosmic_df, top_n=5)
+    assert result["overlap_count"] == 1
+
+
+def test_gene_normalization_whitespace():
+    """' ALK ' -> 'ALK'"""
+    from week2_validation.cosmic.diagnostics import run_cosmic_recurrence_diagnostic
+
+    fusion_df = pd.DataFrame({
+        "gene_1": [" ALK "], "gene_2": [" EML4 "], "recurrence_count": [10],
+    })
+    cosmic_df = pd.DataFrame({
+        "gene_1": ["ALK"], "gene_2": ["EML4"], "recurrence_count": [10],
+    })
+    result = run_cosmic_recurrence_diagnostic(fusion_df=fusion_df, cosmic_df=cosmic_df, top_n=5)
+    assert result["overlap_count"] == 1
+
+
+def test_gene_normalization_mixed_case():
+    """'AlK' -> 'ALK'"""
+    from week2_validation.cosmic.diagnostics import run_cosmic_recurrence_diagnostic
+
+    fusion_df = pd.DataFrame({
+        "gene_1": ["AlK"], "gene_2": ["eMl4"], "recurrence_count": [10],
+    })
+    cosmic_df = pd.DataFrame({
+        "gene_1": ["ALK"], "gene_2": ["EML4"], "recurrence_count": [10],
+    })
+    result = run_cosmic_recurrence_diagnostic(fusion_df=fusion_df, cosmic_df=cosmic_df, top_n=5)
+    assert result["overlap_count"] == 1
+
+
+# -----------------------------------------------------------------------------
+# Test 14 — Data Quality Flags
+# -----------------------------------------------------------------------------
+def test_data_quality_5_percent_excluded_no_warning():
+    """5% excluded -> no warning_flag"""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        rows = ["fusion_id,gene_1,gene_2,protein_length,recurrence_count"]
+        for i in range(100):
+            pl = "inf" if i < 5 else "100"
+            rows.append(f"G{i}::H{i},G{i},H{i},{pl},1")
+        fusion_file = root / "fusion.csv"
+        fusion_file.write_text("\n".join(rows), encoding="utf-8")
+        out_dir = root / "out"
+        out_dir.mkdir()
+        proc = subprocess.run(
+            [sys.executable, "-m", "week2_validation.run_week2",
+             "--fusion-data", str(fusion_file), "--output-dir", str(out_dir),
+             "--run-benford"],
+            capture_output=True, text=True, timeout=30,
+            cwd=str(Path(__file__).resolve().parent.parent.parent),
+            env={**__import__("os").environ, "PYTHONPATH": str(Path(__file__).resolve().parent.parent.parent)},
+        )
+        assert proc.returncode == 0
+        with open(out_dir / "week2_status.json", "r", encoding="utf-8") as f:
+            data = json.load(f)
+        assert data["status"] == "SUCCESS"
+        dq = data.get("data_quality", {})
+        assert dq.get("warning_flag") is False
+
+
+def test_data_quality_15_percent_excluded_warning():
+    """15% excluded -> warning_flag true"""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        rows = ["fusion_id,gene_1,gene_2,protein_length,recurrence_count"]
+        for i in range(100):
+            pl = "inf" if i < 15 else "100"
+            rows.append(f"G{i}::H{i},G{i},H{i},{pl},1")
+        fusion_file = root / "fusion.csv"
+        fusion_file.write_text("\n".join(rows), encoding="utf-8")
+        out_dir = root / "out"
+        out_dir.mkdir()
+        proc = subprocess.run(
+            [sys.executable, "-m", "week2_validation.run_week2",
+             "--fusion-data", str(fusion_file), "--output-dir", str(out_dir),
+             "--run-benford"],
+            capture_output=True, text=True, timeout=30,
+            cwd=str(Path(__file__).resolve().parent.parent.parent),
+            env={**__import__("os").environ, "PYTHONPATH": str(Path(__file__).resolve().parent.parent.parent)},
+        )
+        assert proc.returncode == 0
+        with open(out_dir / "week2_status.json", "r", encoding="utf-8") as f:
+            data = json.load(f)
+        assert data["status"] == "SUCCESS_WITH_WARNINGS"
+        dq = data.get("data_quality", {})
+        assert dq.get("warning_flag") is True
+
+
+def test_data_quality_60_percent_excluded_high_risk():
+    """60% excluded -> high_risk_flag true, status SUCCESS_WITH_HIGH_DATA_RISK"""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        rows = ["fusion_id,gene_1,gene_2,protein_length,recurrence_count"]
+        for i in range(100):
+            pl = "inf" if i < 60 else "100"
+            rows.append(f"G{i}::H{i},G{i},H{i},{pl},1")
+        fusion_file = root / "fusion.csv"
+        fusion_file.write_text("\n".join(rows), encoding="utf-8")
+        out_dir = root / "out"
+        out_dir.mkdir()
+        proc = subprocess.run(
+            [sys.executable, "-m", "week2_validation.run_week2",
+             "--fusion-data", str(fusion_file), "--output-dir", str(out_dir),
+             "--run-benford"],
+            capture_output=True, text=True, timeout=30,
+            cwd=str(Path(__file__).resolve().parent.parent.parent),
+            env={**__import__("os").environ, "PYTHONPATH": str(Path(__file__).resolve().parent.parent.parent)},
+        )
+        assert proc.returncode == 0
+        with open(out_dir / "week2_status.json", "r", encoding="utf-8") as f:
+            data = json.load(f)
+        assert data["status"] == "SUCCESS_WITH_HIGH_DATA_RISK"
+        dq = data.get("data_quality", {})
+        assert dq.get("high_risk_flag") is True
+
+
+# -----------------------------------------------------------------------------
+# Test 15 — Excel .xls Rejected
+# -----------------------------------------------------------------------------
+def test_excel_xls_rejected_clear_error():
+    """If .xls provided -> clear error message."""
+    from week2_validation.utils.data_loader import UnsupportedFormatError, get_file_format
+    from unittest.mock import MagicMock
+
+    mock_path = MagicMock()
+    mock_path.suffix = ".xls"
+    mock_path.name = "data.xls"
+    with pytest.raises(UnsupportedFormatError, match="Legacy Excel.*not supported.*convert to .xlsx"):
+        get_file_format(mock_path)
+
+
+# -----------------------------------------------------------------------------
+# Test 16 — Empty Dataset Graceful Handling (PATCH 1)
+# -----------------------------------------------------------------------------
+def test_empty_dataset_graceful_handling():
+    """CSV with headers only -> diagnostics.skipped true, status SUCCESS_WITH_WARNINGS, exit_code 0."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        fusion_file = root / "fusion.csv"
+        fusion_file.write_text(
+            "fusion_id,gene_1,gene_2,protein_length,recurrence_count\n",
+            encoding="utf-8",
+        )
+        out_dir = root / "out"
+        out_dir.mkdir()
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "week2_validation.run_week2",
+                "--fusion-data",
+                str(fusion_file),
+                "--output-dir",
+                str(out_dir),
+                "--run-diagnostics",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=str(Path(__file__).resolve().parent.parent.parent),
+            env={**__import__("os").environ, "PYTHONPATH": str(Path(__file__).resolve().parent.parent.parent)},
+        )
+        assert proc.returncode == 0, f"stderr: {proc.stderr!r} stdout: {proc.stdout!r}"
+        with open(out_dir / "week2_status.json", "r", encoding="utf-8") as f:
+            data = json.load(f)
+        assert data.get("diagnostics", {}).get("skipped") is True
+        assert data.get("diagnostics", {}).get("skip_reason") == "EMPTY_DATASET"
+        assert data.get("status") == "SUCCESS_WITH_WARNINGS"
+        dq = data.get("data_quality", {})
+        assert dq.get("total_rows_original") == 0
+        assert dq.get("warning_flag") is True
+        assert dq.get("high_risk_flag") is False
+
+
+# -----------------------------------------------------------------------------
+# Test 17 — Exit Code 30 for Diagnostic Runtime Failure (PATCH 2)
+# -----------------------------------------------------------------------------
+def test_diagnostic_runtime_failure_exit_code_30():
+    """Diagnostic runtime failure must map to exit code 30."""
+    from unittest.mock import patch
+    from week2_validation.run_week2 import run_pipeline, PipelineConfig
+    from week2_validation.runtime.exit_codes import Week2ExitCode
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        fusion_file = root / "fusion.csv"
+        fusion_file.write_text(
+            "fusion_id,gene_1,gene_2,protein_length,recurrence_count\n"
+            "F1::G1,G1,H1,100,1\n",
+            encoding="utf-8",
+        )
+        out_dir = root / "out"
+        out_dir.mkdir()
+        config = PipelineConfig(
+            fusion_data_path=fusion_file,
+            output_dir=out_dir,
+            cosmic_data_path=None,
+            dry_run=False,
+            run_diagnostics=True,
+            run_benford=False,
+            run_lognormal=False,
+            run_cosmic=False,
+            run_benford_controls=False,
+        )
+        with patch("week2_validation.run_week2.execute_diagnostics") as mock_exec:
+            mock_exec.return_value = int(Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR)
+            exit_code = run_pipeline(config)
+        assert exit_code == int(Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR)
+
+
+# -----------------------------------------------------------------------------
+# Test 18 — Constant Distribution Flag (PATCH 3)
+# -----------------------------------------------------------------------------
+def test_constant_distribution_detected_flag():
+    """protein_length = [100,100,100,100] -> constant_distribution_detected True, diagnostics still run."""
+    from week2_validation.distributions.log_normality import run_log_normality_diagnostics
+
+    result = run_log_normality_diagnostics([100.0, 100.0, 100.0, 100.0])
+    assert result.constant_distribution_detected is True
+    assert "variance is zero" in " ".join(result.computation_notes)
+    assert result.sample_size == 4

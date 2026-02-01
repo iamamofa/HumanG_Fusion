@@ -18,7 +18,7 @@ Supported formats:
     - TSV (.tsv) - Tab-separated values, similar to CSV but uses tabs
     - JSON (.json) - JavaScript Object Notation, a structured text format
     - Parquet (.parquet) - A compressed format for large datasets
-    - Excel (.xlsx, .xls) - Microsoft Excel spreadsheet files
+    - Excel (.xlsx) - Microsoft Excel spreadsheet files (.xlsx only)
 
 Security considerations:
     - No execution of arbitrary code
@@ -93,7 +93,8 @@ class SchemaValidationError(DataLoaderError):
 # These define what file types we support and what columns we require
 
 # All the file extensions (types) that we know how to read
-SUPPORTED_EXTENSIONS: Set[str] = {".csv", ".tsv", ".json", ".parquet", ".xlsx", ".xls"}
+# Excel: .xlsx only (legacy .xls not supported)
+SUPPORTED_EXTENSIONS: Set[str] = {".csv", ".tsv", ".json", ".parquet", ".xlsx"}
 
 # The columns that MUST be present in fusion data files (matches schema fusion_schema.yaml)
 # Without these columns, we cannot perform the validation analysis
@@ -286,6 +287,12 @@ def get_file_format(file_path: Path) -> str:
             f"File has no extension, cannot determine format: {file_path.name}"
         )
 
+    # Legacy Excel (.xls) is not supported
+    if extension == ".xls":
+        raise UnsupportedFormatError(
+            "Legacy Excel (.xls) is not supported. Please convert to .xlsx."
+        )
+
     # Check if we support this file type
     if extension not in SUPPORTED_EXTENSIONS:
         raise UnsupportedFormatError(
@@ -390,7 +397,7 @@ def _check_file_size_and_csv_rows(file_path: Path, extension: str) -> None:
     # Caution zone: approaching limits (early warning)
     if size > CAUTION_FILE_SIZE_BYTES and size <= SOFT_WARNING_FILE_SIZE_BYTES:
         _logger.warning(
-            "Input file >1GB: approaching safe limit (10GB). Monitor memory usage."
+            "Input file >1GB: approaching safe limit (5GB). Monitor memory usage."
         )
     # Soft warning: high risk zone
     elif size > SOFT_WARNING_FILE_SIZE_BYTES:
@@ -561,7 +568,7 @@ def load_excel(file_path: Path) -> pd.DataFrame:
             f"File size {size} exceeds maximum allowed {MAX_FILE_SIZE_BYTES} bytes"
         )
     try:
-        # 'engine="openpyxl"' specifies which library to use for reading Excel
+        # engine="openpyxl" for .xlsx (legacy .xls not supported)
         return pd.read_excel(file_path, engine="openpyxl")
     except ValueError as e:
         raise DataLoaderError(f"Excel reading error: {e}") from e
@@ -575,7 +582,7 @@ def load_data(file_path: str) -> pd.DataFrame:
     It automatically detects the file type based on the extension and
     uses the appropriate loader.
 
-    Supported formats: CSV, TSV, JSON, Parquet, Excel (.xlsx, .xls)
+    Supported formats: CSV, TSV, JSON, Parquet, Excel (.xlsx only)
 
     Args:
         file_path: Location of the data file (e.g., "C:/data/myfile.csv").
@@ -601,8 +608,7 @@ def load_data(file_path: str) -> pd.DataFrame:
         ".tsv": load_tsv,       # TSV files (tab-separated)
         ".json": load_json,     # JSON files
         ".parquet": load_parquet,  # Parquet files
-        ".xlsx": load_excel,    # Modern Excel files
-        ".xls": load_excel,     # Older Excel files
+        ".xlsx": load_excel,    # Excel .xlsx (legacy .xls not supported)
     }
 
     # STEP 4: Get the appropriate loader function for this file type

@@ -96,7 +96,9 @@ week2_validation/
 | `runtime/` | Exit codes, runtime guard, safe execution wrapper |
 | `tests/` | Integration tests (pytest) |
 | `sim_out/` | Runtime pipeline output directory (week2_*.csv, week2_*.json) |
-| `frozen_inputs/` | Runtime directory for frozen dataset snapshots |
+| `frozen_inputs/` | Runtime directory for frozen dataset snapshots (created on first run; safe to delete to clear old snapshots) |
+
+**Using real data:** Point `--fusion-data` to your fusion CSV and `--output-dir` to where you want outputs. The pipeline creates `frozen_inputs/` automatically when it runs (one snapshot per input file). No simulation or test artifacts are required.
 
 ### Dependencies (`requirements.txt` / `requirements.lock.txt`)
 
@@ -116,7 +118,7 @@ week2_validation/
 
 | Parameter | Safe Zone | Caution Zone | Hard Limit |
 |-----------|-----------|--------------|------------|
-| **File size** | < 1 GB | 1–5 GB (warning) | 10 GB (rejected) |
+| **File size** | < 1 GB | 1–5 GB (warning) | 5 GB (rejected) |
 | **CSV/TSV rows (est.)** | < 10M | 10M–100M (warning) | 200M (rejected) |
 | **Runtime** | < 100 s typical | 100–3600 s | 3600 s (RuntimeError) |
 | **Memory (RSS)** | < 2 GB typical | 2–8 GB | 8 GB (RuntimeError, requires psutil) |

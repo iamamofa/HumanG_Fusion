@@ -1,4 +1,0 @@
-geneA	geneB	fusion	samples_detected	recurrence_frequency	rank
-A	B	A--B	50	0.25	1
-C	D	C--D	30	0.15	2
-E	F	E--F	20	0.10	3

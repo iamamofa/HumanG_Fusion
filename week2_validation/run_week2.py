@@ -597,7 +597,7 @@ def execute_diagnostics(
     except ImportError as e:
         print(f"Error: Cannot import diagnostic module: {e}", file=sys.stderr)
         print("Make sure all required dependencies are installed.", file=sys.stderr)
-        return 1
+        return int(Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR)
     
     # -------------------------------------------------------------------------
     # Load the fusion data for diagnostic analysis
@@ -608,7 +608,7 @@ def execute_diagnostics(
         fusion_df = load_fusion_data(str(data_path))
     except Exception as e:
         print(f"Error loading fusion data for diagnostics: {e}", file=sys.stderr)
-        return 1
+        return int(Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR)
     
     # -------------------------------------------------------------------------
     # Extract protein_length column for analysis
@@ -616,7 +616,7 @@ def execute_diagnostics(
     # -------------------------------------------------------------------------
     if "protein_length" not in fusion_df.columns:
         print("Error: 'protein_length' column not found in fusion data.", file=sys.stderr)
-        return 1
+        return int(Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR)
     
     protein_lengths = fusion_df["protein_length"].tolist()
     
@@ -650,7 +650,7 @@ def execute_diagnostics(
         
     except Exception as e:
         print(f"Error during diagnostic analysis: {e}", file=sys.stderr)
-        return 1
+        return int(Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR)
     
     return 0
 
@@ -693,7 +693,7 @@ def execute_benford_diagnostics(
     except ImportError as e:
         print(f"Error: Cannot import Benford diagnostic module: {e}", file=sys.stderr)
         print("Make sure all required dependencies are installed.", file=sys.stderr)
-        return 1
+        return int(Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR)
     
     # -------------------------------------------------------------------------
     # Load the fusion data for Benford analysis
@@ -704,7 +704,7 @@ def execute_benford_diagnostics(
         fusion_df = load_fusion_data(str(data_path))
     except Exception as e:
         print(f"Error loading fusion data for Benford diagnostics: {e}", file=sys.stderr)
-        return 1
+        return int(Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR)
     
     # -------------------------------------------------------------------------
     # Extract protein_length column for analysis
@@ -712,7 +712,7 @@ def execute_benford_diagnostics(
     # -------------------------------------------------------------------------
     if "protein_length" not in fusion_df.columns:
         print("Error: 'protein_length' column not found in fusion data.", file=sys.stderr)
-        return 1
+        return int(Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR)
     
     protein_lengths = fusion_df["protein_length"].tolist()
     
@@ -762,7 +762,7 @@ def execute_benford_diagnostics(
         
     except Exception as e:
         print(f"Error during Benford diagnostic analysis: {e}", file=sys.stderr)
-        return 1
+        return int(Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR)
     
     return 0
 
@@ -813,7 +813,7 @@ def execute_log_normality_diagnostics(
     except ImportError as e:
         print(f"Error: Cannot import log-normality diagnostic module: {e}", file=sys.stderr)
         print("Make sure all required dependencies are installed.", file=sys.stderr)
-        return 1
+        return int(Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR)
     
     # -------------------------------------------------------------------------
     # Load the fusion data for log-normality analysis
@@ -824,7 +824,7 @@ def execute_log_normality_diagnostics(
         fusion_df = load_fusion_data(str(data_path))
     except Exception as e:
         print(f"Error loading fusion data for log-normality diagnostics: {e}", file=sys.stderr)
-        return 1
+        return int(Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR)
     
     # -------------------------------------------------------------------------
     # Extract protein_length column for analysis
@@ -832,7 +832,7 @@ def execute_log_normality_diagnostics(
     # -------------------------------------------------------------------------
     if "protein_length" not in fusion_df.columns:
         print("Error: 'protein_length' column not found in fusion data.", file=sys.stderr)
-        return 1
+        return int(Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR)
     
     protein_lengths = fusion_df["protein_length"].tolist()
     
@@ -871,7 +871,7 @@ def execute_log_normality_diagnostics(
         
     except Exception as e:
         print(f"Error during log-normality diagnostic analysis: {e}", file=sys.stderr)
-        return 1
+        return int(Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR)
     
     return 0
 
@@ -923,7 +923,7 @@ def execute_cosmic_diagnostics(
     except ImportError as e:
         print(f"Error: Cannot import COSMIC diagnostic module: {e}", file=sys.stderr)
         print("Make sure all required dependencies are installed.", file=sys.stderr)
-        return (1, False)
+        return (int(Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR), False)
     
     # -------------------------------------------------------------------------
     # Load the fusion data
@@ -934,7 +934,7 @@ def execute_cosmic_diagnostics(
         fusion_df = load_fusion_data(str(data_path))
     except Exception as e:
         print(f"Error loading fusion data for COSMIC diagnostics: {e}", file=sys.stderr)
-        return (1, False)
+        return (int(Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR), False)
     
     # -------------------------------------------------------------------------
     # Load COSMIC data (only if available)
@@ -995,7 +995,7 @@ def execute_cosmic_diagnostics(
         
     except Exception as e:
         print(f"Error during COSMIC diagnostic analysis: {e}", file=sys.stderr)
-        return (1, cosmic_reference_loaded if config.cosmic_data_path is not None else True)
+        return (int(Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR), cosmic_reference_loaded if config.cosmic_data_path is not None else True)
     
     return (0, cosmic_reference_loaded if config.cosmic_data_path is not None else True)
 
@@ -1172,6 +1172,7 @@ def run_pipeline(config: PipelineConfig) -> int:
     Raises:
         PipelineError: If something goes wrong during pipeline execution.
     """
+    global _run_metadata
     # Print a header banner to clearly show the pipeline is starting
     print("=" * 60)
     print("Week 2 Validation Pipeline")
@@ -1244,6 +1245,59 @@ def run_pipeline(config: PipelineConfig) -> int:
     print()
 
     # =========================================================================
+    # STEP 3.5: Compute data quality (protein_length exclusion for diagnostics)
+    # =========================================================================
+    _run_metadata["dataset_hash"] = frozen_input_dir.name
+    import numpy as np
+    try:
+        _fusion_df = load_fusion_data(str(effective_data_path))
+        total_rows_original = len(_fusion_df)
+        if "protein_length" in _fusion_df.columns and total_rows_original > 0:
+            pl = np.asarray(_fusion_df["protein_length"], dtype=np.float64)
+            valid_mask = np.isfinite(pl) & (pl > 0)
+            rows_used_for_analysis = int(np.sum(valid_mask))
+            rows_excluded = total_rows_original - rows_used_for_analysis
+            excluded_fraction = rows_excluded / total_rows_original
+        else:
+            rows_used_for_analysis = total_rows_original
+            rows_excluded = 0
+            excluded_fraction = 0.0
+        _run_metadata["data_quality"] = {
+            "total_rows_original": total_rows_original,
+            "rows_used_for_analysis": rows_used_for_analysis,
+            "rows_excluded": rows_excluded,
+            "excluded_fraction": round(excluded_fraction, 6),
+            "warning_flag": excluded_fraction > 0.10,
+            "high_risk_flag": excluded_fraction > 0.50,
+        }
+    except Exception:
+        _run_metadata["data_quality"] = {
+            "total_rows_original": 0,
+            "rows_used_for_analysis": 0,
+            "rows_excluded": 0,
+            "excluded_fraction": 0.0,
+            "warning_flag": False,
+            "high_risk_flag": False,
+        }
+
+    # -------------------------------------------------------------------------
+    # STEP 3.6: Empty dataset — skip diagnostics, complete with warnings
+    # -------------------------------------------------------------------------
+    total_rows_after_schema = _run_metadata["data_quality"].get("total_rows_original", 0)
+    if total_rows_after_schema == 0:
+        _run_metadata["data_quality"] = {
+            "total_rows_original": 0,
+            "rows_used_for_analysis": 0,
+            "rows_excluded": 0,
+            "excluded_fraction": 0.0,
+            "warning_flag": True,
+            "high_risk_flag": False,
+        }
+        _run_metadata["diagnostics_skipped"] = True
+        _run_metadata["skip_reason"] = "EMPTY_DATASET"
+        print("EMPTY_DATASET_DETECTED — Diagnostics skipped, pipeline completed with warnings.")
+
+    # =========================================================================
     # STEP 4: Handle --dry-run mode
     # =========================================================================
     if config.dry_run:
@@ -1278,105 +1332,113 @@ def run_pipeline(config: PipelineConfig) -> int:
         return 0  # Exit cleanly (explicit request required)
 
     # =========================================================================
-    # STEP 7: Dataset is frozen AND diagnostics requested - execute
+    # STEP 7: Dataset is frozen AND diagnostics requested - execute (skip if empty)
     # =========================================================================
-    print("=" * 60)
-    print("RUNNING DIAGNOSTICS")
-    print("=" * 60)
-    print("Dataset frozen (automatic): YES")
-    print(f"Distribution diagnostics requested: {'YES' if config.run_diagnostics else 'NO'}")
-    print(f"Benford diagnostics requested: {'YES' if config.run_benford else 'NO'}")
-    print(f"Log-normality diagnostics requested: {'YES' if config.run_lognormal else 'NO'}")
-    print(f"COSMIC diagnostics requested: {'YES' if config.run_cosmic else 'NO'}")
-    print()
-
-    global _run_metadata
-    _run_metadata = {
-        "dataset_hash": frozen_input_dir.name,
-        "diagnostics_run": [n for n, f in [
-            ("diagnostics", config.run_diagnostics),
-            ("benford", config.run_benford),
-            ("lognormal", config.run_lognormal),
-            ("cosmic", config.run_cosmic),
-        ] if f],
-    }
-
     exit_code = 0
-
-    # Execute distribution diagnostics if requested (lazy import happens inside)
-    # Uses frozen_input_path to ensure diagnostics operate on immutable data
-    if config.run_diagnostics:
-        check_runtime_guard()
-        result = execute_diagnostics(config, week2_config, frozen_data_path=effective_data_path)
-        check_runtime_guard()
-        if result != 0:
-            exit_code = result
+    if _run_metadata.get("diagnostics_skipped"):
+        # Empty dataset: diagnostics already skipped in STEP 3.6; write status and exit
+        _run_metadata["diagnostics_run"] = [
+            n for n, f in [
+                ("diagnostics", config.run_diagnostics),
+                ("benford", config.run_benford),
+                ("lognormal", config.run_lognormal),
+                ("cosmic", config.run_cosmic),
+            ] if f
+        ]
+    else:
+        print("=" * 60)
+        print("RUNNING DIAGNOSTICS")
+        print("=" * 60)
+        print("Dataset frozen (automatic): YES")
+        print(f"Distribution diagnostics requested: {'YES' if config.run_diagnostics else 'NO'}")
+        print(f"Benford diagnostics requested: {'YES' if config.run_benford else 'NO'}")
+        print(f"Log-normality diagnostics requested: {'YES' if config.run_lognormal else 'NO'}")
+        print(f"COSMIC diagnostics requested: {'YES' if config.run_cosmic else 'NO'}")
         print()
 
-    # Execute Benford diagnostics if requested (lazy import happens inside)
-    # Uses frozen_input_path to ensure diagnostics operate on immutable data
-    if config.run_benford:
-        check_runtime_guard()
-        result = execute_benford_diagnostics(config, week2_config, frozen_data_path=effective_data_path)
-        check_runtime_guard()
-        if result != 0:
-            exit_code = result
-        print()
+        _run_metadata["diagnostics_run"] = [
+            n for n, f in [
+                ("diagnostics", config.run_diagnostics),
+                ("benford", config.run_benford),
+                ("lognormal", config.run_lognormal),
+                ("cosmic", config.run_cosmic),
+            ] if f
+        ]
 
-    # Execute log-normality diagnostics if requested (lazy import happens inside)
-    # Uses frozen_input_path to ensure diagnostics operate on immutable data
-    if config.run_lognormal:
-        check_runtime_guard()
-        result = execute_log_normality_diagnostics(config, week2_config, frozen_data_path=effective_data_path)
-        check_runtime_guard()
-        if result != 0:
-            exit_code = result
-        print()
+        # Execute distribution diagnostics if requested (lazy import happens inside)
+        # Uses frozen_input_path to ensure diagnostics operate on immutable data
+        if config.run_diagnostics:
+            check_runtime_guard()
+            result = execute_diagnostics(config, week2_config, frozen_data_path=effective_data_path)
+            check_runtime_guard()
+            if result != 0:
+                exit_code = result
+            print()
 
-    # Execute COSMIC diagnostics if requested (lazy import happens inside)
-    # Uses frozen_input_path to ensure diagnostics operate on immutable data
-    if config.run_cosmic:
-        check_runtime_guard()
-        result_code, cosmic_loaded = execute_cosmic_diagnostics(config, week2_config, frozen_data_path=effective_data_path)
-        check_runtime_guard()
-        if result_code != 0:
-            exit_code = result_code
-        if config.cosmic_data_path is not None:
-            _run_metadata["cosmic_reference_loaded"] = cosmic_loaded
+        # Execute Benford diagnostics if requested (lazy import happens inside)
+        # Uses frozen_input_path to ensure diagnostics operate on immutable data
+        if config.run_benford:
+            check_runtime_guard()
+            result = execute_benford_diagnostics(config, week2_config, frozen_data_path=effective_data_path)
+            check_runtime_guard()
+            if result != 0:
+                exit_code = result
+            print()
 
-    # Optional: write approved dataset artifacts when validation succeeded (additive only)
-    # Does not affect exit_code, pipeline success/failure, or status envelope on failure
-    if exit_code == 0:
-        try:
+        # Execute log-normality diagnostics if requested (lazy import happens inside)
+        # Uses frozen_input_path to ensure diagnostics operate on immutable data
+        if config.run_lognormal:
+            check_runtime_guard()
+            result = execute_log_normality_diagnostics(config, week2_config, frozen_data_path=effective_data_path)
+            check_runtime_guard()
+            if result != 0:
+                exit_code = result
+            print()
+
+        # Execute COSMIC diagnostics if requested (lazy import happens inside)
+        # Uses frozen_input_path to ensure diagnostics operate on immutable data
+        if config.run_cosmic:
+            check_runtime_guard()
+            result_code, cosmic_loaded = execute_cosmic_diagnostics(config, week2_config, frozen_data_path=effective_data_path)
+            check_runtime_guard()
+            if result_code != 0:
+                exit_code = result_code
+            if config.cosmic_data_path is not None:
+                _run_metadata["cosmic_reference_loaded"] = cosmic_loaded
+
+        # Optional: write approved dataset artifacts when validation succeeded (additive only)
+        # Does not affect exit_code, pipeline success/failure, or status envelope on failure
+        if exit_code == 0:
             try:
-                import scipy
-                _scipy_available = True
-            except Exception:
-                _scipy_available = False
-            try:
-                import psutil
-                _psutil_available = True
-            except Exception:
-                _psutil_available = False
-            _runtime_meta = {
-                "scipy_available": _scipy_available,
-                "psutil_available": _psutil_available,
-            }
-            from week2_validation.reporting.approved_dataset_writer import write_approved_dataset
-            _csv_p, _cert_p = write_approved_dataset(
-                frozen_dataset_path=effective_data_path,
-                output_dir=config.output_dir,
-                dataset_hash=frozen_input_dir.name,
-                validation_passed=True,
-                diagnostics_run=_run_metadata["diagnostics_run"],
-                runtime_metadata=_runtime_meta,
-            )
-            if _csv_p is not None and _cert_p is not None:
-                print(f"Cleaned dataset written: {_csv_p.name}")
-                print(f"Certification written: {_cert_p.name}")
-        except Exception as _e:
-            print(f"Warning: Approved dataset write skipped: {_e}", file=sys.stderr)
-            _run_metadata["approved_dataset_write_note"] = f"Write skipped: {type(_e).__name__}"
+                try:
+                    import scipy
+                    _scipy_available = True
+                except Exception:
+                    _scipy_available = False
+                try:
+                    import psutil
+                    _psutil_available = True
+                except Exception:
+                    _psutil_available = False
+                _runtime_meta = {
+                    "scipy_available": _scipy_available,
+                    "psutil_available": _psutil_available,
+                }
+                from week2_validation.reporting.approved_dataset_writer import write_approved_dataset
+                _csv_p, _cert_p = write_approved_dataset(
+                    frozen_dataset_path=effective_data_path,
+                    output_dir=config.output_dir,
+                    dataset_hash=frozen_input_dir.name,
+                    validation_passed=True,
+                    diagnostics_run=_run_metadata["diagnostics_run"],
+                    runtime_metadata=_runtime_meta,
+                )
+                if _csv_p is not None and _cert_p is not None:
+                    print(f"Cleaned dataset written: {_csv_p.name}")
+                    print(f"Certification written: {_cert_p.name}")
+            except Exception as _e:
+                print(f"Warning: Approved dataset write skipped: {_e}", file=sys.stderr)
+                _run_metadata["approved_dataset_write_note"] = f"Write skipped: {type(_e).__name__}"
 
     return exit_code
 
@@ -1483,6 +1545,9 @@ def main() -> int:
         cosmic_reference_requested=cosmic_reference_requested,
         scipy_available=scipy_available,
         psutil_available=psutil_available,
+        data_quality=meta.get("data_quality"),
+        diagnostics_skipped=meta.get("diagnostics_skipped"),
+        skip_reason=meta.get("skip_reason"),
     )
     envelope["runtime_seconds"] = round(runtime_seconds, 2)
     status_path = config.output_dir / "week2_status.json"

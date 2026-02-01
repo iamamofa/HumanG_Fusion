@@ -269,6 +269,9 @@ class LogNormalityDiagnosticResult:
     
     computation_notes : List[str]
         Notes about the computation, including any exclusions or warnings.
+    
+    constant_distribution_detected : bool
+        True when input variance is zero or std <= machine epsilon; log-normal fit is numerically fragile.
     """
     
     ks_statistic: Optional[float]
@@ -281,6 +284,7 @@ class LogNormalityDiagnosticResult:
     computation_successful: bool
     metadata: DiagnosticMetadata
     computation_notes: List[str]
+    constant_distribution_detected: bool
     
     def __post_init__(self) -> None:
         """Validate result integrity for audit compliance."""
@@ -856,7 +860,8 @@ def run_log_normality_diagnostics(
             sample_size=0,
             computation_successful=True,
             metadata=metadata,
-            computation_notes=computation_notes
+            computation_notes=computation_notes,
+            constant_distribution_detected=False,
         )
     
     # Convert input to numpy array
@@ -876,7 +881,8 @@ def run_log_normality_diagnostics(
             sample_size=0,
             computation_successful=False,
             metadata=metadata,
-            computation_notes=computation_notes
+            computation_notes=computation_notes,
+            constant_distribution_detected=False,
         )
     
     # Check for empty input
@@ -895,7 +901,8 @@ def run_log_normality_diagnostics(
             sample_size=0,
             computation_successful=False,
             metadata=metadata,
-            computation_notes=computation_notes
+            computation_notes=computation_notes,
+            constant_distribution_detected=False,
         )
     
     # Filter to valid positive finite values
@@ -920,7 +927,8 @@ def run_log_normality_diagnostics(
             sample_size=0,
             computation_successful=False,
             metadata=metadata,
-            computation_notes=computation_notes
+            computation_notes=computation_notes,
+            constant_distribution_detected=False,
         )
     
     if sample_size < 2:
@@ -940,7 +948,18 @@ def run_log_normality_diagnostics(
             sample_size=sample_size,
             computation_successful=False,
             metadata=metadata,
-            computation_notes=computation_notes
+            computation_notes=computation_notes,
+            constant_distribution_detected=False,
+        )
+    
+    # Detect constant distribution (variance zero or std <= machine epsilon)
+    _variance = float(np.var(valid_data))
+    _std = float(np.std(valid_data)) if _variance > 0 else 0.0
+    _eps = np.finfo(np.float64).eps
+    constant_distribution_detected = _variance == 0 or _std <= _eps
+    if constant_distribution_detected:
+        computation_notes.append(
+            "Input distribution variance is zero; log-normal fit is numerically fragile."
         )
     
     # Fit log-normal parameters
@@ -966,7 +985,8 @@ def run_log_normality_diagnostics(
             sample_size=sample_size,
             computation_successful=False,
             metadata=metadata,
-            computation_notes=computation_notes
+            computation_notes=computation_notes,
+            constant_distribution_detected=constant_distribution_detected,
         )
     
     # Compute KS statistic
@@ -1038,7 +1058,8 @@ def run_log_normality_diagnostics(
         sample_size=sample_size,
         computation_successful=computation_successful,
         metadata=metadata,
-        computation_notes=computation_notes
+        computation_notes=computation_notes,
+        constant_distribution_detected=constant_distribution_detected,
     )
 
 

@@ -69,6 +69,9 @@ def build_status_envelope(
     cosmic_reference_requested: Optional[bool] = None,
     scipy_available: Optional[bool] = None,
     psutil_available: Optional[bool] = None,
+    data_quality: Optional[dict] = None,
+    diagnostics_skipped: Optional[bool] = None,
+    skip_reason: Optional[str] = None,
 ) -> dict:
     """
     Build machine-readable status envelope with runtime metadata.
@@ -90,7 +93,12 @@ def build_status_envelope(
         Optional keys added when provided. JSON-serializable.
     """
     if exit_code == 0:
-        status = "SUCCESS"
+        if data_quality and data_quality.get("high_risk_flag"):
+            status = "SUCCESS_WITH_HIGH_DATA_RISK"
+        elif data_quality and data_quality.get("warning_flag"):
+            status = "SUCCESS_WITH_WARNINGS"
+        else:
+            status = "SUCCESS"
     elif exit_code < 50:
         status = "FAILED"
     else:
@@ -113,4 +121,11 @@ def build_status_envelope(
         envelope["scipy_available"] = bool(scipy_available)
     if psutil_available is not None:
         envelope["psutil_available"] = bool(psutil_available)
+    if data_quality is not None:
+        envelope["data_quality"] = dict(data_quality)
+    if diagnostics_skipped:
+        envelope["diagnostics"] = {
+            "skipped": True,
+            "skip_reason": skip_reason or "EMPTY_DATASET",
+        }
     return envelope

@@ -22,6 +22,31 @@ IT ONLY:
 - Prints descriptive summaries
 """
 
+import logging
+
+_logger = logging.getLogger(__name__)
+
+# Threshold for GENE_NORMALIZATION_HIGH_IMPACT warning (fraction of gene values changed)
+_GENE_NORM_WARN_THRESHOLD = 0.05
+
+
+def _normalize_gene_columns(df, gene_cols=("gene_1", "gene_2")):
+    """
+    Apply .astype(str).str.upper().str.strip() to gene columns.
+    Returns (df_with_normalized_columns, n_changed, n_total).
+    """
+    n_changed = 0
+    n_total = 0
+    for col in gene_cols:
+        if col not in df.columns:
+            continue
+        before = df[col].astype(str)
+        after = before.str.upper().str.strip()
+        df[col] = after
+        n_total += len(df)
+        n_changed += (before != after).sum()
+    return df, n_changed, n_total
+
 
 def run_cosmic_recurrence_diagnostic(
     *,
@@ -107,7 +132,17 @@ def run_cosmic_recurrence_diagnostic(
             "top_rank_discrepancies": [],
             "message": f"COSMIC data missing required columns: {missing_cosmic_cols}",
         }
-    
+
+    # -------------------------------------------------------------------------
+    # STEP 1.5: Normalize gene_1, gene_2 (uppercase, strip) before pair creation
+    # -------------------------------------------------------------------------
+    fusion_df, n_fusion_changed, n_fusion_total = _normalize_gene_columns(fusion_df.copy())
+    cosmic_df, n_cosmic_changed, n_cosmic_total = _normalize_gene_columns(cosmic_df.copy())
+    n_changed_total = n_fusion_changed + n_cosmic_changed
+    n_gene_values_total = n_fusion_total + n_cosmic_total
+    if n_gene_values_total > 0 and n_changed_total / n_gene_values_total > _GENE_NORM_WARN_THRESHOLD:
+        _logger.warning("GENE_NORMALIZATION_HIGH_IMPACT")
+
     # -------------------------------------------------------------------------
     # STEP 2: Normalize fusion pairs (uppercase, strip, sort alphabetically)
     # -------------------------------------------------------------------------
