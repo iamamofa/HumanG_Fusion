@@ -1,0 +1,27 @@
+# =============================================================================
+# Week 2 Fusion Input Schema Contract
+# =============================================================================
+# Defines minimum valid input structure for Week 2 validation pipeline.
+# Validation-only: do NOT auto-fix data.
+# =============================================================================
+
+required_columns:
+  # fusion_id required to match runtime loader contract (data_loader.py).
+  # This ensures schema validation and execution pipeline enforce identical dataset interface.
+  - fusion_id
+  - gene_1
+  - gene_2
+  - protein_length
+  - recurrence_count
+
+constraints:
+  protein_length:
+    min_exclusive: 0
+    description: "protein_length must be > 0"
+  recurrence_count:
+    min_inclusive: 0
+    description: "recurrence_count must be >= 0"
+
+null_policy:
+  required_columns: no_nulls
+  description: "No nulls allowed in required columns"

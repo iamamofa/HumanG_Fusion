@@ -32,10 +32,14 @@ week2_validation/
 ├── run_week2.py          # Main program — run this to start the pipeline
 ├── README.md             # This documentation
 ├── requirements.txt      # Python packages needed to run
+├── requirements.lock.txt # Locked dependency versions (reproducible installs)
 │
 ├── config/               # Settings and rules
 │   ├── thresholds.yaml   # Configuration (sample sizes, test settings, etc.)
 │   └── loader.py         # Reads and validates the config file
+│
+├── schemas/              # Input schema contracts
+│   └── fusion_schema.yaml   # Required columns and constraints for fusion data
 │
 ├── utils/                # Shared helpers
 │   ├── data_loader.py    # Loads fusion and COSMIC data from files
@@ -51,18 +55,31 @@ week2_validation/
 │   ├── benford_controls.py   # Test data generators (standalone)
 │   └── benford_test.py   # Benford test utilities (standalone)
 │
-└── cosmic/               # COSMIC comparison
-    └── diagnostics.py    # Compare your fusion list to COSMIC (--run-cosmic)
+├── cosmic/               # COSMIC comparison
+│   └── diagnostics.py    # Compare your fusion list to COSMIC (--run-cosmic)
+│
+├── reporting/            # Structured output
+│   └── json_summary.py   # Writes week2_integrity_summary.json to output dir
+│
+├── tests/                # Integration tests
+│   └── test_week2_integration.py   # Freeze, schema, SciPy optional, JSON summary
+│
+└── frozen_inputs/        # Runtime: immutable dataset snapshots (created on run)
+    └── <hash_prefix>/    # One dir per frozen input (hash-based)
 ```
 
 | Folder / File | Purpose |
 |---------------|---------|
 | `run_week2.py` | Entry point — the program you run |
 | `config/` | Configuration and thresholds |
+| `schemas/` | Input schema contracts (fusion_schema.yaml) |
 | `utils/` | File loading, freeze logic, state checks |
 | `distributions/` | Distribution and log-normality diagnostics |
 | `benford/` | Benford's Law diagnostics |
 | `cosmic/` | COSMIC database comparison |
+| `reporting/` | Structured JSON output (week2_integrity_summary.json) |
+| `tests/` | Integration tests (pytest) |
+| `frozen_inputs/` | Runtime directory for frozen dataset snapshots |
 
 ---
 
@@ -147,7 +164,7 @@ the following occurs in order:
 
 6. **Freeze-state logic** — `resolve_freeze_state(flag_file_path)` checks whether `week2_validation/.frozen` exists. If it exists, `is_frozen=True`. If not, `is_frozen=False` (given `cli_frozen=False` as default). The flag file is authoritative; there is no CLI override for "frozen."
 
-7. **Input validation** — `validate_inputs()` loads fusion data (and COSMIC if provided) from the frozen path, validates schema (`fusion_id`, `protein_length`, `recurrence_count`), and confirms the output directory is writable.
+7. **Input validation** — `validate_inputs()` loads fusion data (and COSMIC if provided) from the frozen path, validates schema (required columns: `fusion_id`, `gene_1`, `gene_2`, `protein_length`, `recurrence_count`; see `schemas/fusion_schema.yaml`), and confirms the output directory is writable.
 
 8. **Exit conditions**:
    - `--dry-run`: Exit 0 after validation.
@@ -260,7 +277,7 @@ The original path may change (e.g., file overwritten) between validation and ana
 
 **What it computes:** Descriptive rank-order comparison between fusion and COSMIC recurrence data. Counts overlapping pairs, rank discrepancies; reports top N discrepancies by absolute rank difference.
 
-**Required inputs:** `fusion_df` and optionally `cosmic_df` with columns `gene_1`, `gene_2`, `recurrence_count`.
+**Required inputs:** `fusion_df` (must conform to fusion schema: `fusion_id`, `gene_1`, `gene_2`, `protein_length`, `recurrence_count`) and optionally `cosmic_df` with columns `gene_1`, `gene_2`, `recurrence_count`.
 
 **Optional dependencies:** None beyond pandas (provided by data loader).
 
@@ -269,6 +286,18 @@ The original path may change (e.g., file overwritten) between validation and ana
 **Writes files:** No.
 
 **Performs inference:** No. No statistical tests, correlations, or validation conclusions.
+
+### 6.6 Reporting (`reporting/json_summary.py`)
+
+**What it computes:** Writes a structured JSON file (`week2_integrity_summary.json`) to the output directory with run metadata and diagnostic results.
+
+**Required inputs:** `output_dir` (Path), `run_metadata` (dict with week2_version, run_timestamp_utc, dataset_hash), `diagnostic_results` (dict with diagnostics_run, results, notes).
+
+**Optional dependencies:** None (uses stdlib `json`).
+
+**Writes files:** Yes. Creates `week2_integrity_summary.json` in the output directory when invoked.
+
+**Performs inference:** No.
 
 ---
 
@@ -335,6 +364,7 @@ Week 3 must not bypass Week 2. The defensive freeze and freeze-state check ensur
 
 - CLI with `--fusion-data`, `--output-dir`, `--cosmic-data`, `--run-diagnostics`, `--run-benford`, `--run-lognormal`, `--run-cosmic`, `--run-benford-controls`, `--dry-run`
 - Configuration loading from `thresholds.yaml`
+- Schema contract in `schemas/fusion_schema.yaml` (required columns: `fusion_id`, `gene_1`, `gene_2`, `protein_length`, `recurrence_count`)
 - Defensive freeze via `ensure_frozen_input()` and `get_frozen_data_path()`
 - Freeze state resolution from flag file `week2_validation/.frozen`
 - Input validation (path checks, schema validation for fusion data)
@@ -343,11 +373,14 @@ Week 3 must not bypass Week 2. The defensive freeze and freeze-state check ensur
 - Benford diagnostics (FSD distribution, chi-squared, applicability heuristic)
 - Benford controls (synthetic positive/negative)
 - COSMIC rank-order diagnostic
+- Reporting module (`reporting/json_summary.py`) for structured JSON output
+- Integration tests (`tests/test_week2_integration.py`) for freeze, schema, SciPy optional mode, JSON summary
 
 ### Runnable
 
 - The pipeline runs via `python -m week2_validation.run_week2`
 - All diagnostic modules support lazy import; missing optional deps cause graceful degradation with notes.
+- Run integration tests via `python -m pytest week2_validation/tests/` (requires pytest).
 
 ### Executed
 
