@@ -1,5 +1,5 @@
 """
-config/loader.py - Safe configuration loading and validation for Week 2 pipeline.
+config/loader.py - Safe configuration loading and validation for Week 2: Data Integrity & Statistical Validation pipeline.
 
 Loads and validates thresholds.yaml with strict validation.
 Does not infer defaults. Treats configuration as read-only.
@@ -154,7 +154,7 @@ class ReportingConfig:
 @dataclass(frozen=True)
 class Week2Config:
     """
-    Complete, immutable configuration for the Week 2 validation pipeline.
+    Complete, immutable configuration for the Data Integrity & Statistical Validation pipeline.
     
     This is the main configuration object that contains all settings
     needed to run the pipeline. All fields are validated upon loading.
@@ -486,7 +486,7 @@ def _parse_reporting(data: Dict[str, Any]) -> ReportingConfig:
 
 def load_config(config_path: Path) -> Week2Config:
     """
-    Load and validate the Week 2 configuration from a YAML file.
+    Load and validate the Data Integrity & Statistical Validation configuration from a YAML file.
     
     This is the main entry point for loading configuration. It reads the
     thresholds.yaml file, validates all fields, and returns an immutable

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Week 2 Validation Pipeline - CLI Entry Point.
+Week 2: Data Integrity & Statistical Validation — CLI Entry Point.
 
-This module provides the command-line interface for the Week 2 data
-integrity and statistical validation pipeline. It handles argument
+This module provides the command-line interface for the Data Integrity &
+Statistical Validation pipeline. It handles argument
 parsing, input validation, and orchestration of the validation workflow.
 
 WHAT DOES THIS FILE DO?
-This is the main "control center" for running the Week 2 validation checks.
+This is the main "control center" for running the Data Integrity & Statistical Validation checks.
 When a user runs this program from the command line, this file:
 1. Reads the user's instructions (which files to analyze, where to save results)
 2. Loads configuration from thresholds.yaml
@@ -113,7 +113,7 @@ from week2_validation.utils.state import (
     resolve_freeze_state,      # Resolves freeze state from flag file + CLI
 )
 
-# Import defensive freeze logic (Week 2 owned dataset freezing)
+# Import defensive freeze logic (Data Integrity & Statistical Validation owned dataset freezing)
 from week2_validation.utils.freeze import FreezeError, ensure_frozen_input, get_frozen_data_path
 
 # Survivability runtime layer
@@ -122,7 +122,7 @@ from week2_validation.runtime.runtime_guard import check_runtime_guard, start_ru
 from week2_validation.runtime.safe_runner import run_week2_safely
 from week2_validation.reporting.status_envelope import build_status_envelope
 
-# Week 1 compatibility adapter
+# Week 1: Pipeline Execution & Data Generation compatibility adapter
 from week2_validation.adapters.week1_adapter import adapt_week1_dataframe
 
 # =============================================================================
@@ -241,7 +241,7 @@ def create_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="week2_validation",  # Name shown in help text
         description=(
-            "Week 2 Data Integrity & Statistical Validation Pipeline. "
+            "Data Integrity & Statistical Validation Pipeline. "
             "Performs diagnostic validation on fusion datasets. "
             "This pipeline is diagnostic only: no hypothesis testing, "
             "no modeling, no biological claims."
@@ -479,7 +479,7 @@ def validate_inputs(
     Raises:
         PipelineError: If any input file cannot be loaded or is malformed.
     """
-    # Use frozen path if provided (Week 2 defensive freeze)
+    # Use frozen path if provided (Data Integrity & Statistical Validation defensive freeze)
     data_path = frozen_data_path if frozen_data_path is not None else config.fusion_data_path
     
     # Tell the user what we're checking
@@ -601,7 +601,7 @@ def execute_diagnostics(
     
     # -------------------------------------------------------------------------
     # Load the fusion data for diagnostic analysis
-    # Use frozen path if provided (Week 2 defensive freeze)
+    # Use frozen path if provided (Data Integrity & Statistical Validation defensive freeze)
     # -------------------------------------------------------------------------
     data_path = frozen_data_path if frozen_data_path is not None else config.fusion_data_path
     try:
@@ -697,7 +697,7 @@ def execute_benford_diagnostics(
     
     # -------------------------------------------------------------------------
     # Load the fusion data for Benford analysis
-    # Use frozen path if provided (Week 2 defensive freeze)
+    # Use frozen path if provided (Data Integrity & Statistical Validation defensive freeze)
     # -------------------------------------------------------------------------
     data_path = frozen_data_path if frozen_data_path is not None else config.fusion_data_path
     try:
@@ -817,7 +817,7 @@ def execute_log_normality_diagnostics(
     
     # -------------------------------------------------------------------------
     # Load the fusion data for log-normality analysis
-    # Use frozen path if provided (Week 2 defensive freeze)
+    # Use frozen path if provided (Data Integrity & Statistical Validation defensive freeze)
     # -------------------------------------------------------------------------
     data_path = frozen_data_path if frozen_data_path is not None else config.fusion_data_path
     try:
@@ -927,7 +927,7 @@ def execute_cosmic_diagnostics(
     
     # -------------------------------------------------------------------------
     # Load the fusion data
-    # Use frozen path if provided (Week 2 defensive freeze)
+    # Use frozen path if provided (Data Integrity & Statistical Validation defensive freeze)
     # -------------------------------------------------------------------------
     data_path = frozen_data_path if frozen_data_path is not None else config.fusion_data_path
     try:
@@ -1175,7 +1175,7 @@ def run_pipeline(config: PipelineConfig) -> int:
     global _run_metadata
     # Print a header banner to clearly show the pipeline is starting
     print("=" * 60)
-    print("Week 2 Validation Pipeline")
+    print("Data Integrity & Statistical Validation Pipeline")
     print("=" * 60)
     print()
 
@@ -1203,9 +1203,9 @@ def run_pipeline(config: PipelineConfig) -> int:
     # =========================================================================
     # STEP 1.5: Defensive Freeze - Ensure input is frozen BEFORE diagnostics
     # =========================================================================
-    # Week 2 cannot assume Week 1 froze the data. This defensive freeze ensures
+    # Data Integrity & Statistical Validation cannot assume Week 1 froze the data. This defensive freeze ensures
     # that ALL diagnostics operate on immutable data, regardless of upstream.
-    print("Ensuring dataset is frozen for Week 2 diagnostics...")
+    print("Ensuring dataset is frozen for Data Integrity & Statistical Validation diagnostics...")
     
     try:
         frozen_root = Path(__file__).parent / "frozen_inputs"
@@ -1222,7 +1222,7 @@ def run_pipeline(config: PipelineConfig) -> int:
     print()
 
     # =========================================================================
-    # STEP 2: Week 1 adapter - convert to Week 2 schema if needed
+    # STEP 2: Week 1 (Pipeline Execution & Data Generation) adapter - convert to schema if needed
     # =========================================================================
     try:
         raw_df = load_data(str(frozen_input_path))
@@ -1233,7 +1233,7 @@ def run_pipeline(config: PipelineConfig) -> int:
             adapted_path = config.output_dir / "week2_adapted_fusion.csv"
             adapted_df.to_csv(adapted_path, sep=",", index=False)
             effective_data_path = adapted_path
-            print("  Week 1 format detected; adapted data written for diagnostics")
+            print("  Week 1 (Pipeline Execution & Data Generation) format detected; adapted data written for diagnostics")
     except ValueError as e:
         raise PipelineError(f"Input schema adaptation failed: {e}") from e
 

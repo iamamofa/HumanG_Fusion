@@ -1,5 +1,5 @@
 """
-Week 2 Data Integrity & Statistical Validation Pipeline.
+Data Integrity & Statistical Validation Pipeline — validates authenticity and reliability of fusion protein length data.
 
 This package provides tools for validating cancer genomics fusion
 datasets as part of a reproducible research pipeline.

@@ -22,7 +22,7 @@ This module does NOT:
     - Depend on external pipeline state or configuration
 
 PURPOSE:
-    Week 2 of the cancer genomics pipeline focuses on data integrity and
+    Week 2: Data Integrity & Statistical Validation focuses on data integrity and
     structural validation. This module enables researchers to visually and
     numerically inspect the distributional characteristics of protein length
     data BEFORE any downstream inference or modeling.
@@ -801,7 +801,7 @@ def run_diagnostics(
     """
     Run complete diagnostic analysis on protein length data.
 
-    This is the primary entry point for Week 2 diagnostic validation.
+    This is the primary entry point for Data Integrity & Statistical Validation diagnostic validation.
     It performs input validation, computes descriptive statistics,
     and generates diagnostic histograms in a single call.
 
@@ -850,7 +850,7 @@ def run_diagnostics(
     Notes
     -----
     DIAGNOSTIC ONLY. This function provides structural characterization
-    of protein length data for Week 2 validation. It does NOT:
+    of protein length data for Data Integrity & Statistical Validation. It does NOT:
         - Perform hypothesis testing
         - Fit statistical models
         - Provide biological interpretation

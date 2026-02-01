@@ -1,5 +1,5 @@
 """
-Utility modules for Week 2 validation pipeline.
+Utility modules for Week 2: Data Integrity & Statistical Validation pipeline.
 
 This package provides core utilities for data loading, validation,
 and secure file handling operations.

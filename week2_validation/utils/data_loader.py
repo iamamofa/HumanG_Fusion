@@ -1,5 +1,5 @@
 """
-Data loader module for Week 2 validation pipeline.
+Data loader module for Week 2: Data Integrity & Statistical Validation pipeline.
 
 This module provides secure, format-agnostic data loading capabilities
 for cancer genomics fusion datasets. It supports multiple file formats

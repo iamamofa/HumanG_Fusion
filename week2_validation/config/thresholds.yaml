@@ -1,4 +1,4 @@
-# Week 2 Statistical Thresholds
+# Week 2: Data Integrity & Statistical Validation — Statistical Thresholds
 # Locked BEFORE any real data analysis
 #
 # These thresholds define applicability and decision rules only.
@@ -8,7 +8,7 @@
 # General rules
 # -------------------------------
 dataset_frozen_required: true
-allow_real_data_analysis: false  # must remain false until Week 1 freeze
+allow_real_data_analysis: false  # must remain false until Week 1: Pipeline Execution & Data Generation freeze
 
 # -------------------------------
 # Sample size requirements

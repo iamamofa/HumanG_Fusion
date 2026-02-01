@@ -1,5 +1,5 @@
 """
-Week 2 Machine Output Layer - Structured JSON Summary.
+Week 2: Data Integrity & Statistical Validation — Machine Output Layer (Structured JSON Summary).
 
 This module writes a single structured JSON file (week2_integrity_summary.json)
 when called. It is passive: it does not pull data from the pipeline, import
@@ -20,7 +20,7 @@ def write_week2_summary_json(
     diagnostic_results: dict,
 ) -> Path:
     """
-    Write Week 2 integrity summary as structured JSON.
+    Write Data Integrity & Statistical Validation integrity summary as structured JSON.
 
     Creates output_dir/week2_integrity_summary.json with required keys:
     week2_version, run_timestamp_utc, dataset_hash, diagnostics_run,

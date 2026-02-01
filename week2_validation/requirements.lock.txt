@@ -1,5 +1,5 @@
 # =============================================================================
-# Week 2 Validation Pipeline - Locked Dependencies
+# Week 2: Data Integrity & Statistical Validation — Locked Dependencies
 # =============================================================================
 # Exact reproducible environment snapshot. Do not invent dependencies.
 # Generated from code actually imported in week2_validation.

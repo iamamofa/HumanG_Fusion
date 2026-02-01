@@ -1,5 +1,5 @@
 """
-Week 2 Integration Tests - Stability Infrastructure.
+Week 2: Data Integrity & Statistical Validation — Integration Tests (Stability Infrastructure).
 
 Tests freeze determinism, schema validation contract, SciPy optional mode,
 JSON summary structure, null policy, path traversal hardening, parallel freeze,

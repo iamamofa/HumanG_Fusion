@@ -1,5 +1,5 @@
 """
-Week 2 Approved Dataset Writer — Deliverable Completion Layer.
+Week 2: Data Integrity & Statistical Validation — Approved Dataset Writer (Deliverable Completion Layer).
 
 When validation succeeds, optionally writes:
   1. week2_cleaned_dataset.csv — copy of frozen validated dataset (no modifications).

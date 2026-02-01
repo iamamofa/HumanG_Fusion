@@ -1,5 +1,5 @@
 # =============================================================================
-# Week 2 Validation Pipeline - Python Dependencies
+# Week 2: Data Integrity & Statistical Validation — Python Dependencies
 # =============================================================================
 # This file lists all dependencies required to run every implemented feature.
 # Dependencies are categorized by usage and requirement level.

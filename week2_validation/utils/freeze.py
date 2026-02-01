@@ -1,21 +1,22 @@
 """
-freeze.py - Week 2 Defensive Dataset Freeze Logic.
+freeze.py - Week 2: Data Integrity & Statistical Validation — Defensive Dataset Freeze Logic.
 
-This module provides Week 2's own dataset freeze mechanism that ensures
-data immutability BEFORE any diagnostics run. This is defensive freezing,
-independent of any Week 1 behavior.
+This module provides the Data Integrity & Statistical Validation layer's own dataset freeze
+mechanism that ensures data immutability BEFORE any diagnostics run. This is defensive
+freezing, independent of any Week 1: Pipeline Execution & Data Generation behavior.
 
 WHAT IS DEFENSIVE FREEZING?
-Week 2 cannot assume that incoming data was frozen by Week 1. To ensure
-data integrity and reproducibility, Week 2 enforces its own freeze logic:
+Week 2: Data Integrity & Statistical Validation cannot assume that incoming data was frozen
+by Week 1: Pipeline Execution & Data Generation. To ensure data integrity and reproducibility,
+this layer enforces its own freeze logic:
 
 1. Detect if incoming data is already frozen (has manifest + marker)
-2. If not frozen, create a frozen snapshot owned by Week 2
+2. If not frozen, create a frozen snapshot
 3. All diagnostics operate on the frozen snapshot, never raw input
 
 WHY IS THIS NEEDED?
-- Week 1 behavior is unknown and cannot be assumed
-- Week 2 must protect itself from data changes during analysis
+- Week 1 (Pipeline Execution & Data Generation) behavior is unknown and cannot be assumed
+- Week 2 (Data Integrity & Statistical Validation) must protect itself from data changes during analysis
 - Audit trail requires explicit proof of data state at analysis time
 - Reproducibility requires immutable data snapshots
 
@@ -328,12 +329,12 @@ def ensure_frozen_input(
     frozen_root: Path,
 ) -> Path:
     """
-    Ensure that the input dataset is frozen before Week 2 diagnostics.
+    Ensure that the input dataset is frozen before Data Integrity & Statistical Validation diagnostics.
 
     If the dataset is already frozen (manifest + .frozen marker),
     validate and return frozen path.
 
-    If not frozen, create a frozen snapshot owned by Week 2.
+    If not frozen, create a frozen snapshot.
 
     This function is:
     - Deterministic: Same input always produces same frozen directory
@@ -376,7 +377,7 @@ def ensure_frozen_input(
     # =========================================================================
     # STEP 3: Dataset not frozen — create frozen snapshot
     # =========================================================================
-    print("Dataset not frozen — freezing input for Week 2 diagnostics")
+    print("Dataset not frozen — freezing input for Data Integrity & Statistical Validation diagnostics")
     
     # Compute hash of input file
     try:

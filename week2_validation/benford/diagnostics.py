@@ -1,5 +1,5 @@
 """
-Benford's Law Diagnostic Module — Week 2 Data Integrity Pipeline
+Benford's Law Diagnostic Module — Week 2: Data Integrity & Statistical Validation
 
 ================================================================================
 DIAGNOSTIC-ONLY DISCLAIMER
@@ -35,7 +35,7 @@ PIPELINE CONTEXT
 
 This module is part of Week 2: Data Integrity & Statistical Validation.
 
-Week 2 enforces:
+This layer enforces:
 - Dataset freeze gates (handled elsewhere)
 - No inference before freeze
 - No hypothesis testing conclusions

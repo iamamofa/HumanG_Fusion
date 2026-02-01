@@ -1,5 +1,5 @@
 """
-Week 2 Machine Status Envelope.
+Week 2: Data Integrity & Statistical Validation — Machine Status Envelope.
 
 Extends (not replaces) JSON summary with runtime metadata.
 Sanitizes notes to avoid leaking absolute paths, stack traces, or user home.

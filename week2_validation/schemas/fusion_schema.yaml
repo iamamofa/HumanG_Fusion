@@ -1,7 +1,7 @@
 # =============================================================================
-# Week 2 Fusion Input Schema Contract
+# Week 2: Data Integrity & Statistical Validation — Fusion Input Schema Contract
 # =============================================================================
-# Defines minimum valid input structure for Week 2 validation pipeline.
+# Defines minimum valid input structure for Data Integrity & Statistical Validation pipeline.
 # Validation-only: do NOT auto-fix data.
 # =============================================================================
 

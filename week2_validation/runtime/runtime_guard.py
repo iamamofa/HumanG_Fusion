@@ -1,5 +1,5 @@
 """
-Week 2 Runtime Execution Guard.
+Week 2: Data Integrity & Statistical Validation — Runtime Execution Guard.
 
 Lightweight runtime monitoring: prevents runaway execution, unbounded memory.
 Non-invasive. No thread spawning. No perf penalty.

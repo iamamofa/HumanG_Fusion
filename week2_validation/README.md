@@ -1,17 +1,21 @@
-# Week 2 Validation Pipeline — Documentation
+# Data Integrity & Statistical Validation — Documentation
 
-## 1. Overview — What Is Week 2?
+*This is Week 2: Data Integrity & Statistical Validation — part of the pipeline between Week 1 (Pipeline Execution & Data Generation) and Week 3 (Zipf's Law Modeling & Interpretation).*
 
-**In plain terms:** Week 2 is a data-checking step for cancer fusion gene datasets. It takes your data file, makes a safe copy, runs checks you request, and tells you what it found. It does not approve or reject your data—it only describes it.
+## 1. Overview — What Is This Layer?
 
-### What Week 2 Does
+**Objective:** Validate authenticity and reliability of fusion protein length data.
+
+**In plain terms:** This layer is a data-checking step for cancer fusion gene datasets. It takes your data file, makes a safe copy, runs checks you request, and tells you what it found. It does not approve or reject your data—it only describes it.
+
+### What This Layer Does
 
 - **Checks your data file** — Confirms the file exists, can be read, and has the required columns (fusion_id, gene_1, gene_2, protein_length, recurrence_count).
 - **Makes a locked copy** — Creates an unchanged snapshot of your data before any analysis. This way, if someone edits the original file, your results stay the same.
 - **Runs the checks you ask for** — Distribution stats, Benford’s Law, log-normality, or COSMIC comparison. Results are shown on screen and written to output files.
 - **Shows results on screen** — Prints statistics; does not save plots or charts to disk.
 
-### What Week 2 Does NOT Do
+### What This Layer Does NOT Do
 
 - **Does not pass or fail your data** — It does not approve or reject based on statistics.
 - **Does not draw conclusions** — No hypothesis tests, p-value interpretation, or biological claims.
@@ -19,7 +23,7 @@
 
 ### Why It Exists
 
-Week 2 gives you a clear, reproducible checkpoint. It locks your data so downstream analysis uses the exact same copy, and it records what was checked and what was found.
+This Data Integrity & Statistical Validation layer gives you a clear, reproducible checkpoint. It locks your data so downstream analysis uses the exact same copy, and it records what was checked and what was found.
 
 ---
 
@@ -37,7 +41,7 @@ week2_validation/
 ├── requirements.lock.txt # Locked dependency versions (reproducible installs)
 │
 ├── adapters/             # Upstream format compatibility
-│   └── week1_adapter.py  # Converts Week 1 output to Week 2 schema (geneA/geneB → gene_1/gene_2)
+│   └── week1_adapter.py  # Converts Week 1 (Pipeline Execution & Data Generation) output to this layer's schema
 │
 ├── config/               # Settings and rules
 │   ├── thresholds.yaml   # Configuration (sample sizes, test settings, etc.)
@@ -86,7 +90,7 @@ week2_validation/
 | Folder / File | Purpose |
 |---------------|---------|
 | `run_week2.py` | The main program — this is what you run |
-| `adapters/` | Converts Week 1 column names (geneA, geneB) to the format Week 2 expects |
+| `adapters/` | Converts Week 1 (Pipeline Execution & Data Generation) column names to the format this layer expects |
 | `config/` | Settings and rules (e.g. thresholds.yaml) |
 | `schemas/` | Defines required columns and constraints for your data |
 | `utils/` | Loads files, creates the locked copy, checks state |
@@ -126,16 +130,21 @@ When you approach these limits, the pipeline may log warnings. If you exceed the
 
 ## 2.2 Running with a Real-World Dataset
 
-How to run Week 2 on your own data, what happens step by step, and what you get out.
+This section describes how to run the Data Integrity & Statistical Validation pipeline on your own fusion dataset, what happens step by step, and what output to expect.
 
-### What Your Data File Needs
+### Input Requirements
 
 - **Format:** CSV, TSV, JSON, Parquet, or Excel (.xlsx)
 - **Required columns:** Your spreadsheet or file must have these column names: `fusion_id`, `gene_1`, `gene_2`, `protein_length`, `recurrence_count`
 - **Valid values:** `protein_length` must be greater than 0; `recurrence_count` must be 0 or more
 - **No empty cells** in required columns
 
-If your file uses different column names (e.g. `geneA`, `geneB`, `samples_detected`), the pipeline will convert them automatically.
+- Be in a supported format: CSV, TSV, JSON, Parquet, or Excel (.xlsx)
+- Include these required columns: `fusion_id`, `gene_1`, `gene_2`, `protein_length`, `recurrence_count`
+- Have `protein_length` > 0 and `recurrence_count` >= 0 for all rows
+- Have no nulls in required columns
+
+If your data uses Week 1 (Pipeline Execution & Data Generation) column names (`geneA`, `geneB`, `samples_detected` or `recurrence_frequency`), the pipeline adapts them automatically.
 
 ### How to Run
 
@@ -166,7 +175,7 @@ If your file uses different column names (e.g. `geneA`, `geneB`, `samples_detect
 | 1 | **Read your command** — Check that the data file and output folder paths are valid |
 | 2 | **Load settings** — Read configuration from `thresholds.yaml` |
 | 3 | **Make a locked copy** — Create a snapshot of your data under `frozen_inputs/`. All checks use this copy, not your original file. |
-| 4 | **Convert column names if needed** — If your file uses Week 1 names (geneA, geneB, etc.), convert to the expected format |
+| 4 | **Convert column names if needed** — If your file uses Week 1 (Pipeline Execution & Data Generation) names (geneA, geneB, etc.), convert to the expected format |
 | 5 | **Validate your data** — Load the file, check that all required columns exist, and confirm the output folder can be written to |
 | 6 | **Check data quality** — Count how many rows have valid `protein_length`. If the file is empty, skip checks and report a warning. |
 | 7 | **Run the checks you requested** — Run distribution, Benford, log-normality, or COSMIC checks. Results are printed on screen. |
@@ -176,14 +185,14 @@ If your file uses different column names (e.g. `geneA`, `geneB`, `samples_detect
 
 ```
 ============================================================
-Week 2 Validation Pipeline
+Data Integrity & Statistical Validation
 ============================================================
 
 Loading configuration...
   Configuration loaded from: thresholds.yaml
   ...
-Ensuring dataset is frozen for Week 2 diagnostics...
-Dataset not frozen — freezing input for Week 2 diagnostics
+Ensuring dataset is frozen for Data Integrity & Statistical Validation diagnostics...
+Dataset not frozen — freezing input for diagnostics
 Freeze complete — diagnostics may now proceed
   Frozen data location: .../frozen_inputs/<hash>/your_fusion.csv
 
@@ -216,9 +225,9 @@ Status written to /path/to/outputs/week2_status.json
 | `week2_status.json` | Every run | Run summary: version, dataset ID, exit code, status, which checks ran, data quality info, run time |
 | `week2_cleaned_dataset.csv` | On success | A copy of your validated data (unchanged) |
 | `week2_dataset_certification.json` | On success | A record that the dataset passed validation and is certified for downstream use |
-| `week2_adapted_fusion.csv` | When Week 1 format is detected | Your data after column names were converted |
+| `week2_adapted_fusion.csv` | When Week 1 (Pipeline Execution & Data Generation) format is detected | Your data after column names were converted |
 
-### Locked Copy (frozen_inputs/)
+**Frozen snapshot** — Created under `week2_validation/frozen_inputs/<hash>/`:
 
 The pipeline automatically creates a locked copy of your input under `week2_validation/frozen_inputs/`. This copy is never changed. It includes:
 
@@ -228,7 +237,7 @@ The pipeline automatically creates a locked copy of your input under `week2_vali
 
 ---
 
-## 3. High-Level Workflow — End to End
+## 3. High-Level Workflow Diagram
 
 **In plain terms:** You give the program your data file and an output folder. It checks the files, makes a locked copy, runs the checks you asked for, and shows results on screen and writes output files.
 
@@ -239,10 +248,10 @@ The pipeline automatically creates a locked copy of your input under `week2_vali
     [1] Run the program (you provide: data file, output folder)
        |
        v
-    [2] Check that files exist and can be read
+    [2] Check that files exist and are readable
        |
        v
-    [3] Make a locked copy of your data (unchanged during analysis)
+    [3] Make a safe, locked copy of your data (cannot be changed during analysis)
        |
        v
     [4] Is the data ready for analysis?
@@ -277,7 +286,7 @@ The pipeline automatically creates a locked copy of your input under `week2_vali
            |
            |  (Make a locked copy)
            v
-    [LOCKED COPY]  <-- All checks use this. Your original file is not changed.
+    [LOCKED COPY]  <-- Analysis always uses this. The original is never touched again.
            |
            v
     All checks read from the copy
@@ -331,9 +340,9 @@ the following occurs in order:
 
 ## 5. How the Locked Copy Works (Technical Detail)
 
-### Why Week 2 Makes Its Own Copy
+### Why This Layer Makes Its Own Copy
 
-Week 2 does not assume that any earlier step locked the data. To keep results reproducible and auditable, it makes its own locked copy. All checks use that copy; the original file is not used after the copy is made.
+The Data Integrity & Statistical Validation layer does not assume that any earlier step locked the data. To keep results reproducible and auditable, it makes its own locked copy. All checks use that copy; the original file is not used after the copy is made.
 
 ### What "Frozen" Means
 
@@ -456,7 +465,7 @@ All checks print results to the screen. Output files (e.g. `week2_status.json`) 
 
 ---
 
-## 8. What Week 2 Will Never Do
+## 8. What This Layer Will Never Do (By Design)
 
 - **Does NOT** approve or reject your data based on statistics
 - **Does NOT** pass or fail based on Benford, log-normality, or COSMIC results
@@ -465,31 +474,30 @@ All checks print results to the screen. Output files (e.g. `week2_status.json`) 
 - **Does NOT** save plots or charts to disk
 - **Does NOT** prepare or filter files for the next stage automatically
 
-Week 2 only describes your data. People (or other tools) decide what to do with that information.
+This layer only describes your data. Week 3 (Zipf's Law Modeling & Interpretation) or the user decides what to do with that information.
 
 ---
 
-## 9. Where Week 2 Fits in the Pipeline
+## 9. Where This Layer Fits in the Pipeline
 
-Week 2 receives a fusion data file and optionally a COSMIC reference file. It does not depend on how Week 1 works. It receives a fusion data file path and optionally a COSMIC reference path. The defensive freeze exists because Week 1’s behavior (including whether it freezes data) is unknown. Week 2 creates or validates its own frozen snapshot.
+The Data Integrity & Statistical Validation layer receives a fusion data file and optionally a COSMIC reference file. It does not depend on how Week 1 (Pipeline Execution & Data Generation) works; it makes its own locked copy.
 
-
-How Week 2 fits into the overall pipeline:
+How this layer fits into the overall pipeline:
 
 ```
     [Raw RNA-Seq data]
             |
             v
-    [Week 1]  Process data → Find fusion genes
+    [Week 1: Pipeline Execution & Data Generation]  Process data → Find fusion genes
             |
             v
-    [Week 2]  Check data → Lock a copy → Run diagnostics  <-- You are here
+    [Week 2: Data Integrity & Statistical Validation]  Check data → Lock a copy → Run diagnostics  <-- You are here
             |
             v
-    [Week 3]  Final analysis and results
+    [Week 3: Zipf's Law Modeling & Interpretation]  Final analysis and results
 ```
 
-Week 2 does not produce formal "approved" outputs. It provides diagnostic information. Week 3 (or the user) decides how to use that information.
+This layer does not produce formal "approved" outputs. It provides diagnostic information. Week 3 (Zipf's Law Modeling & Interpretation) or the user decides how to use that information.
 
 ---
 
@@ -498,7 +506,7 @@ Week 2 does not produce formal "approved" outputs. It provides diagnostic inform
 ### Implemented
 
 - CLI with `--fusion-data`, `--output-dir`, `--cosmic-data`, `--run-diagnostics`, `--run-benford`, `--run-lognormal`, `--run-cosmic`, `--run-benford-controls`, `--dry-run`
-- Week 1 adapter (`adapters/week1_adapter.py`) — maps geneA/geneB, recurrence_frequency/samples_detected to Week 2 schema
+- Week 1 (Pipeline Execution & Data Generation) adapter — maps geneA/geneB, recurrence_frequency/samples_detected to this layer's schema
 - Configuration loading from `thresholds.yaml`
 - Schema contract in `schemas/fusion_schema.yaml` (required columns: `fusion_id`, `gene_1`, `gene_2`, `protein_length`, `recurrence_count`)
 - Defensive freeze via `ensure_frozen_input()` and `get_frozen_data_path()`
@@ -528,5 +536,5 @@ Week 2 does not produce formal "approved" outputs. It provides diagnostic inform
 
 - Stdout output: validation messages, diagnostic statistics, disclaimers.
 - Frozen snapshot directory under `week2_validation/frozen_inputs/<hash_prefix>/` when freeze is performed.
-- Output directory (user-specified via `--output-dir`): `week2_status.json` (every run), `week2_cleaned_dataset.csv` and `week2_dataset_certification.json` (on success), `week2_adapted_fusion.csv` (when Week 1 format is detected).
+- Output directory (user-specified via `--output-dir`): `week2_status.json` (every run), `week2_cleaned_dataset.csv` and `week2_dataset_certification.json` (on success), `week2_adapted_fusion.csv` (when Week 1 (Pipeline Execution & Data Generation) format is detected).
 - No files written by diagnostic modules (no plots, no reports).

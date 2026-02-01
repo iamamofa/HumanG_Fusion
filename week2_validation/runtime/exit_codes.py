@@ -1,5 +1,5 @@
 """
-Week 2 Deterministic Exit Code Contract.
+Week 2: Data Integrity & Statistical Validation — Deterministic Exit Code Contract.
 
 Defines machine-readable exit codes for pipeline integration.
 No dependencies outside stdlib.
@@ -9,7 +9,7 @@ from enum import IntEnum
 
 
 class Week2ExitCode(IntEnum):
-    """Deterministic exit codes for Week 2 validation pipeline."""
+    """Deterministic exit codes for Data Integrity & Statistical Validation pipeline."""
 
     SUCCESS = 0
     INPUT_SCHEMA_ERROR = 10

@@ -1,7 +1,7 @@
 """
-Week 2 Atomic Failure Containment Wrapper.
+Week 2: Data Integrity & Statistical Validation — Atomic Failure Containment Wrapper.
 
-Executes Week 2 orchestration inside a hardened safety wrapper.
+Executes Data Integrity & Statistical Validation orchestration inside a hardened safety wrapper.
 Guarantees: exception classification, no partial output, clean stderr, never masks errors.
 """
 
@@ -80,7 +80,7 @@ def _classify_exception(exc: BaseException) -> Week2ExitCode:
 
 def run_week2_safely(main_callable, *args, **kwargs) -> tuple[int, str]:
     """
-    Execute Week 2 orchestration inside a hardened safety wrapper.
+    Execute Data Integrity & Statistical Validation orchestration inside a hardened safety wrapper.
 
     Guarantees:
     - Exception classification → deterministic exit code
@@ -89,7 +89,7 @@ def run_week2_safely(main_callable, *args, **kwargs) -> tuple[int, str]:
     - Never masks freeze or schema errors
 
     Args:
-        main_callable: The main Week 2 entry point (e.g., run_pipeline).
+        main_callable: The main Data Integrity & Statistical Validation entry point (e.g., run_pipeline).
         *args: Positional arguments passed to main_callable.
         **kwargs: Keyword arguments passed to main_callable.
 

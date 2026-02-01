@@ -1,7 +1,8 @@
 """
-Week 1 Compatibility Adapter.
+Week 1: Pipeline Execution & Data Generation — Compatibility Adapter.
 
-Converts Week 1 pipeline output format to Week 2 schema.
+Converts Week 1 (Pipeline Execution & Data Generation) output format to
+Week 2: Data Integrity & Statistical Validation schema.
 Never modifies original DataFrame; always returns a new copy.
 """
 
@@ -14,12 +15,13 @@ SAFE_FREQ_LIMIT = 2.0e6
 
 def adapt_week1_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Adapt DataFrame to Week 2 schema. Accepts Week 1 style columns.
+    Adapt DataFrame to Week 2: Data Integrity & Statistical Validation schema.
+    Accepts Week 1 (Pipeline Execution & Data Generation) style columns.
 
-    If input already matches Week 2 schema (fusion_id, gene_1, gene_2,
+    If input already matches the schema (fusion_id, gene_1, gene_2,
     protein_length, recurrence_count), returns unchanged copy.
 
-    Otherwise maps Week 1 columns:
+    Otherwise maps Week 1 (Pipeline Execution & Data Generation) columns:
         geneA -> gene_1
         geneB -> gene_2
         recurrence_frequency OR samples_detected -> recurrence_count
@@ -29,10 +31,10 @@ def adapt_week1_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     Safety: Never modifies original DataFrame. Always returns new copy.
 
     Args:
-        df: Input DataFrame (Week 1 or Week 2 format).
+        df: Input DataFrame (Week 1: Pipeline Execution & Data Generation or Week 2: Data Integrity & Statistical Validation format).
 
     Returns:
-        New DataFrame conforming to Week 2 schema.
+        New DataFrame conforming to Week 2: Data Integrity & Statistical Validation schema.
 
     Raises:
         ValueError: If adaptation is not possible.
@@ -44,7 +46,7 @@ def adapt_week1_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     cols = set(out.columns)
     adaptation_applied = []
 
-    # Week 2 required columns
+    # Week 2: Data Integrity & Statistical Validation required columns
     w2_fusion_id = "fusion_id" in cols
     w2_gene_1 = "gene_1" in cols
     w2_gene_2 = "gene_2" in cols
@@ -95,6 +97,6 @@ def adapt_week1_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         adaptation_applied.append("protein_length = NaN (not available)")
 
     if adaptation_applied:
-        print("  Week 1 adapter applied:", ", ".join(adaptation_applied))
+        print("  Week 1 (Pipeline Execution & Data Generation) adapter applied:", ", ".join(adaptation_applied))
 
     return out
