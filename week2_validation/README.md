@@ -65,7 +65,8 @@ week2_validation/
 │
 ├── reporting/            # Structured output
 │   ├── json_summary.py   # Writes week2_integrity_summary.json to output dir
-│   └── status_envelope.py   # Builds machine-readable status envelope (version, exit_code, status)
+│   ├── status_envelope.py   # Builds machine-readable status envelope (version, exit_code, status)
+│   └── approved_dataset_writer.py   # Writes week2_cleaned_dataset.csv and week2_dataset_certification.json
 │
 ├── runtime/              # Survivability layer
 │   ├── exit_codes.py     # Deterministic exit code contract (Week2ExitCode)
@@ -74,6 +75,8 @@ week2_validation/
 │
 ├── tests/                # Integration tests
 │   └── test_week2_integration.py   # Freeze, schema, SciPy optional, JSON summary
+│
+├── sim_out/              # Runtime: pipeline output (when used as --output-dir; week2_*.csv, week2_*.json)
 │
 └── frozen_inputs/        # Runtime: immutable dataset snapshots (created on run)
     └── <hash_prefix>/    # One dir per frozen input (hash-based)
@@ -89,18 +92,36 @@ week2_validation/
 | `distributions/` | Distribution and log-normality diagnostics |
 | `benford/` | Benford's Law diagnostics and test utilities |
 | `cosmic/` | COSMIC database comparison |
-| `reporting/` | Structured JSON output and status envelope |
+| `reporting/` | Structured JSON output, status envelope, approved dataset writer |
 | `runtime/` | Exit codes, runtime guard, safe execution wrapper |
 | `tests/` | Integration tests (pytest) |
+| `sim_out/` | Runtime pipeline output directory (week2_*.csv, week2_*.json) |
 | `frozen_inputs/` | Runtime directory for frozen dataset snapshots |
 
 ### Dependencies (`requirements.txt` / `requirements.lock.txt`)
 
 - **Required:** pandas, numpy, matplotlib, PyYAML
-- **Optional (statistical):** scipy (graceful degradation if missing)
+- **Optional (statistical):** scipy (graceful degradation if missing; Benford p-value, log-normality Anderson-Darling, bias-corrected skewness)
 - **Optional (file formats):** openpyxl (Excel), pyarrow (Parquet)
-- **Optional (runtime):** psutil (memory limit checks in `runtime_guard`)
+- **Optional (runtime):** psutil (memory limit checks in `runtime_guard`; if missing, runtime guard skips memory check)
 - **Development:** pytest
+
+**Optional dependency behavior:**
+- **scipy missing:** Benford still computes chi-squared; p-value omitted. Log-normality uses manual KS; Anderson-Darling omitted. Visualization uses NumPy skewness fallback. Status envelope reports `scipy_available: false`.
+- **psutil missing:** Runtime guard checks only elapsed time (no memory limit). Status envelope reports `psutil_available: false`. No crash; pipeline runs normally.
+
+---
+
+## 2.1 Operational Envelope (Safe Operating Zone)
+
+| Parameter | Safe Zone | Caution Zone | Hard Limit |
+|-----------|-----------|--------------|------------|
+| **File size** | < 1 GB | 1–5 GB (warning) | 10 GB (rejected) |
+| **CSV/TSV rows (est.)** | < 10M | 10M–100M (warning) | 200M (rejected) |
+| **Runtime** | < 100 s typical | 100–3600 s | 3600 s (RuntimeError) |
+| **Memory (RSS)** | < 2 GB typical | 2–8 GB | 8 GB (RuntimeError, requires psutil) |
+
+When inputs approach limits, the pipeline logs non-blocking warnings. Exceeding hard limits raises `DataLoaderError` or `RuntimeError` with deterministic exit codes. See `utils/data_loader.py` (MAX_FILE_SIZE_BYTES, MAX_ESTIMATED_CSV_ROWS) and `runtime/runtime_guard.py` (MAX_RUNTIME_SECONDS, MAX_MEMORY_MB).
 
 ---
 
@@ -314,6 +335,8 @@ The original path may change (e.g., file overwritten) between validation and ana
 
 **`status_envelope.py`** — Builds a machine-readable status envelope with `week2_version`, `run_timestamp_utc`, `dataset_hash`, `diagnostics_run`, `exit_code`, and `status` (SUCCESS/FAILED/PARTIAL).
 
+**`approved_dataset_writer.py`** — When validation succeeds, optionally writes `week2_cleaned_dataset.csv` (copy of frozen validated dataset) and `week2_dataset_certification.json` (certification record for power-law modeling) to the output directory. Additive only; does not affect pipeline success/failure.
+
 **Required inputs (json_summary):** `output_dir` (Path), `run_metadata` (dict), `diagnostic_results` (dict).
 
 **Optional dependencies:** None (uses stdlib `json` and `datetime`).
@@ -398,7 +421,7 @@ Week 3 must not bypass Week 2. The defensive freeze and freeze-state check ensur
 - Benford controls (synthetic positive/negative)
 - Benford test utilities (`benford_test.py`) — chi-squared statistic and p-value
 - COSMIC rank-order diagnostic
-- Reporting: `reporting/json_summary.py` (structured JSON output), `reporting/status_envelope.py` (status envelope)
+- Reporting: `reporting/json_summary.py` (structured JSON output), `reporting/status_envelope.py` (status envelope), `reporting/approved_dataset_writer.py` (cleaned dataset and certification JSON)
 - Runtime layer: `runtime/exit_codes.py`, `runtime/runtime_guard.py`, `runtime/safe_runner.py`
 - Integration tests (`tests/test_week2_integration.py`) for freeze, schema, SciPy optional mode, JSON summary
 
@@ -416,4 +439,5 @@ Week 3 must not bypass Week 2. The defensive freeze and freeze-state check ensur
 
 - Stdout output: validation messages, diagnostic statistics, disclaimers.
 - Frozen snapshot directory under `week2_validation/frozen_inputs/<hash_prefix>/` when freeze is performed.
+- Output directory (e.g. `sim_out/`): `week2_adapted_fusion.csv`, `week2_cleaned_dataset.csv`, `week2_dataset_certification.json`, `week2_status.json`, `week2_integrity_summary.json` when the pipeline writes them.
 - No files written by diagnostic modules (no plots, no reports).

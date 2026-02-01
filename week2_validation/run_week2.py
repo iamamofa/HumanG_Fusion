@@ -923,7 +923,7 @@ def execute_cosmic_diagnostics(
     except ImportError as e:
         print(f"Error: Cannot import COSMIC diagnostic module: {e}", file=sys.stderr)
         print("Make sure all required dependencies are installed.", file=sys.stderr)
-        return 1
+        return (1, False)
     
     # -------------------------------------------------------------------------
     # Load the fusion data
@@ -934,7 +934,7 @@ def execute_cosmic_diagnostics(
         fusion_df = load_fusion_data(str(data_path))
     except Exception as e:
         print(f"Error loading fusion data for COSMIC diagnostics: {e}", file=sys.stderr)
-        return 1
+        return (1, False)
     
     # -------------------------------------------------------------------------
     # Load COSMIC data (only if available)
@@ -1344,6 +1344,40 @@ def run_pipeline(config: PipelineConfig) -> int:
         if config.cosmic_data_path is not None:
             _run_metadata["cosmic_reference_loaded"] = cosmic_loaded
 
+    # Optional: write approved dataset artifacts when validation succeeded (additive only)
+    # Does not affect exit_code, pipeline success/failure, or status envelope on failure
+    if exit_code == 0:
+        try:
+            try:
+                import scipy
+                _scipy_available = True
+            except Exception:
+                _scipy_available = False
+            try:
+                import psutil
+                _psutil_available = True
+            except Exception:
+                _psutil_available = False
+            _runtime_meta = {
+                "scipy_available": _scipy_available,
+                "psutil_available": _psutil_available,
+            }
+            from week2_validation.reporting.approved_dataset_writer import write_approved_dataset
+            _csv_p, _cert_p = write_approved_dataset(
+                frozen_dataset_path=effective_data_path,
+                output_dir=config.output_dir,
+                dataset_hash=frozen_input_dir.name,
+                validation_passed=True,
+                diagnostics_run=_run_metadata["diagnostics_run"],
+                runtime_metadata=_runtime_meta,
+            )
+            if _csv_p is not None and _cert_p is not None:
+                print(f"Cleaned dataset written: {_csv_p.name}")
+                print(f"Certification written: {_cert_p.name}")
+        except Exception as _e:
+            print(f"Warning: Approved dataset write skipped: {_e}", file=sys.stderr)
+            _run_metadata["approved_dataset_write_note"] = f"Write skipped: {type(_e).__name__}"
+
     return exit_code
 
 
@@ -1422,17 +1456,33 @@ def main() -> int:
     check_runtime_guard()
     runtime_seconds = time.monotonic() - start_time
 
+    # Optional dependency availability (observability only; no logic change)
+    try:
+        import scipy
+        scipy_available = True
+    except Exception:
+        scipy_available = False
+    try:
+        import psutil
+        psutil_available = True
+    except Exception:
+        psutil_available = False
+
     # Always write status envelope
     meta = _run_metadata
     notes = [status_msg] if status_msg and status_msg != "OK" else []
     if meta.get("cosmic_reference_loaded") is False:
         notes.append("COSMIC_LOAD_FAILED")
+    cosmic_reference_requested = config.cosmic_data_path is not None
     envelope = build_status_envelope(
         dataset_hash=meta.get("dataset_hash", ""),
         diagnostics_run=meta.get("diagnostics_run", []),
         exit_code=exit_code,
         notes=notes,
         cosmic_reference_loaded=meta.get("cosmic_reference_loaded"),
+        cosmic_reference_requested=cosmic_reference_requested,
+        scipy_available=scipy_available,
+        psutil_available=psutil_available,
     )
     envelope["runtime_seconds"] = round(runtime_seconds, 2)
     status_path = config.output_dir / "week2_status.json"
@@ -1442,7 +1492,9 @@ def main() -> int:
         print(f"Status written to {status_path}")
     except OSError as e:
         print(f"Could not write status file: {e}", file=sys.stderr)
-        exit_code = int(Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR)
+        # Status write failure always overrides success exit (FIX 4)
+        if exit_code == 0:
+            exit_code = int(Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR)
         return exit_code
 
     return exit_code

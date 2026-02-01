@@ -19,6 +19,7 @@ def _sanitize_note(note: str) -> str:
     """
     Remove absolute paths, stack traces, environment paths, user home from a note.
     Allow error class name, short message, error category.
+    Covers UNC paths, symlinks, long paths, and common path patterns.
     """
     if not note or not isinstance(note, str):
         return ""
@@ -26,12 +27,22 @@ def _sanitize_note(note: str) -> str:
     # Remove lines that look like stack trace (File "...", line N)
     s = re.sub(r'\n\s*File "[^"]+", line \d+.*', "", s)
     s = re.sub(r'\n\s*File \'[^\']+\', line \d+.*', "", s)
-    # Remove absolute paths (Unix and Windows)
+    # Windows UNC (\\?\ or \\server\share)
+    s = re.sub(r"\\\\\?\\[^\s]*", "<path>", s)
+    s = re.sub(r"\\\\[^\s\\]+\\[^\s]*", "<path>", s)
+    # Windows long path (\\?\C:\...)
+    s = re.sub(r"\\\\\?\\[A-Za-z]:\\[^\s]*", "<path>", s, flags=re.IGNORECASE)
+    # Absolute paths (Unix and Windows)
     s = re.sub(r"/[A-Za-z]:?[\w/\\\.\-]*", "<path>", s)
     s = re.sub(r"[A-Za-z]:\\[\w\\\.\-]*", "<path>", s)
-    # Remove user home patterns (e.g. /Users/name, /home/name, C:\Users\name)
+    # User home patterns (/Users/name, /home/name, C:\Users\name)
     s = re.sub(r"(/Users|/home)/[^\s]*", "<path>", s)
     s = re.sub(r"[A-Za-z]:\\Users\\[^\s]*", "<path>", s, flags=re.IGNORECASE)
+    # Symlink targets (path -> path)
+    s = re.sub(r"(?:[/\\][\w/\\\.\-]+|[\w]:\\[\w\\\.\-]*)\s*->\s*[\w/\\\.\-]+", "<path>", s)
+    # Multiple slash collapse (e.g. /// or \\\\) so no path-like run remains
+    s = re.sub(r"/{2,}", "/", s)
+    s = re.sub(r"\\\\+", r"\\", s)
     # Collapse repeated <path>
     s = re.sub(r"(<path>\s*)+", "<path> ", s)
     return s.strip()[:500]  # Cap length
@@ -55,6 +66,9 @@ def build_status_envelope(
     exit_code: int,
     notes: list[str],
     cosmic_reference_loaded: Optional[bool] = None,
+    cosmic_reference_requested: Optional[bool] = None,
+    scipy_available: Optional[bool] = None,
+    psutil_available: Optional[bool] = None,
 ) -> dict:
     """
     Build machine-readable status envelope with runtime metadata.
@@ -66,12 +80,14 @@ def build_status_envelope(
         notes: Optional notes or messages (sanitized: no paths/stack traces).
         cosmic_reference_loaded: If --cosmic-data was provided, True when load
             succeeded, False when load failed. Omitted when cosmic not requested.
+        cosmic_reference_requested: True when --cosmic-data was provided.
+        scipy_available: True if scipy import succeeded at runtime (observability only).
+        psutil_available: True if psutil import succeeded at runtime (observability only).
 
     Returns:
         Dict with week2_version, run_timestamp_utc, dataset_hash,
         diagnostics_run, exit_code, status, notes.
-        cosmic_reference_loaded added when provided.
-        JSON-serializable.
+        Optional keys added when provided. JSON-serializable.
     """
     if exit_code == 0:
         status = "SUCCESS"
@@ -91,4 +107,10 @@ def build_status_envelope(
     }
     if cosmic_reference_loaded is not None:
         envelope["cosmic_reference_loaded"] = bool(cosmic_reference_loaded)
+    if cosmic_reference_requested is not None:
+        envelope["cosmic_reference_requested"] = bool(cosmic_reference_requested)
+    if scipy_available is not None:
+        envelope["scipy_available"] = bool(scipy_available)
+    if psutil_available is not None:
+        envelope["psutil_available"] = bool(psutil_available)
     return envelope

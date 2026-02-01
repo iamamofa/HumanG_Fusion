@@ -28,6 +28,7 @@ Security considerations:
 """
 
 # 'Path' helps work with file and folder locations on the computer
+import logging
 from pathlib import Path
 # 'Optional' means a value can be present or None; 'Set' is a collection of unique items
 from typing import Optional, Set
@@ -35,6 +36,8 @@ from typing import Optional, Set
 # 'pandas' is a powerful library for working with tabular data (like spreadsheets)
 # We abbreviate it as 'pd' for convenience
 import pandas as pd
+
+_logger = logging.getLogger(__name__)
 
 
 # ----- CUSTOM ERROR TYPES -----
@@ -102,11 +105,19 @@ REQUIRED_FUSION_FIELDS: Set[str] = {
     "recurrence_count",
 }
 
-# Memory exhaustion protection: max file size before load (default 2GB)
-MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024 * 1024
+# Memory exhaustion protection: max file size before load (5GB; aligned with runtime guard)
+MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024 * 1024
 # CSV/TSV row estimate: avg bytes per row for guard; reject if estimated rows exceed
 AVG_CSV_ROW_BYTES = 200
-MAX_ESTIMATED_CSV_ROWS = 50_000_000
+MAX_ESTIMATED_CSV_ROWS = 200_000_000  # 200M estimated rows ceiling
+
+# Soft warning thresholds (observability only; non-blocking)
+SOFT_WARNING_FILE_SIZE_BYTES = 5 * 1024 * 1024 * 1024  # 5 GB
+SOFT_WARNING_EST_ROWS = 100_000_000  # 100M
+
+# Caution zone: approaching limits — early warning (non-blocking)
+CAUTION_FILE_SIZE_BYTES = 1 * 1024 * 1024 * 1024  # 1 GB
+CAUTION_EST_ROWS = 10_000_000  # 10M rows
 
 
 def validate_file_path(file_path: str, must_exist: bool = True) -> Path:
@@ -154,10 +165,12 @@ def validate_file_path(file_path: str, must_exist: bool = True) -> Path:
         raise FileValidationError(f"Cannot resolve file path: {e}") from e
 
     # CHECK 5: Security check for directory traversal attempts
-    # ".." in a path could be used to access files outside allowed directories
-    # This is a common hacking technique, so we block it
-    path_str = str(path)
-    if ".." in path_str.split("/") or ".." in path_str.split("\\"):
+    # Block any path component exactly equal to ".." (blocks .... and other variants)
+    try:
+        parts = path.parts
+    except (TypeError, ValueError):
+        raise FileValidationError("Invalid path structure") from None
+    if ".." in parts:
         raise FileValidationError(
             "Directory traversal patterns detected in path"
         )
@@ -213,8 +226,11 @@ def validate_output_directory(dir_path: str, create: bool = False) -> Path:
         raise FileValidationError(f"Cannot resolve directory path: {e}") from e
 
     # CHECK 5: Security check for directory traversal
-    path_str = str(path)
-    if ".." in path_str.split("/") or ".." in path_str.split("\\"):
+    try:
+        parts = path.parts
+    except (TypeError, ValueError):
+        raise FileValidationError("Invalid path structure") from None
+    if ".." in parts:
         raise FileValidationError(
             "Directory traversal patterns detected in path"
         )
@@ -321,6 +337,40 @@ def validate_schema(df: pd.DataFrame, required_fields: Set[str]) -> None:
             f"Available fields: {sorted(actual_columns)}"
         )
 
+    # Null policy: required columns must not contain nulls (matches fusion_schema.yaml)
+    for col in required_fields:
+        if col in actual_columns and df[col].isnull().any():
+            null_count = int(df[col].isnull().sum())
+            raise SchemaValidationError(
+                f"Nulls not allowed in required column '{col}'. "
+                f"Found {null_count} null value(s)."
+            )
+
+
+def _validate_fusion_numeric_constraints(df: pd.DataFrame) -> None:
+    """
+    Enforce runtime numeric constraints defined in fusion_schema.yaml
+    WITHOUT changing schema loader behavior.
+
+    NaN values are allowed (existing diagnostics decide). Only enforce
+    when numeric value exists.
+    """
+    if "protein_length" in df.columns:
+        # NaN <= 0 is False; only 0 and negative trigger
+        invalid_mask = df["protein_length"] <= 0
+        if invalid_mask.any():
+            raise SchemaValidationError(
+                "Invalid protein_length values detected (must be > 0)"
+            )
+
+    if "recurrence_count" in df.columns:
+        # NaN < 0 is False; only negative triggers
+        invalid_mask = df["recurrence_count"] < 0
+        if invalid_mask.any():
+            raise SchemaValidationError(
+                "Invalid recurrence_count values detected (must be >= 0)"
+            )
+
 
 # ----- FILE FORMAT LOADERS -----
 # Each function below reads a specific file type and returns the data as a table
@@ -336,12 +386,32 @@ def _check_file_size_and_csv_rows(file_path: Path, extension: str) -> None:
         size = file_path.stat().st_size
     except OSError as e:
         raise DataLoaderError(f"Cannot stat file: {e}") from e
+
+    # Caution zone: approaching limits (early warning)
+    if size > CAUTION_FILE_SIZE_BYTES and size <= SOFT_WARNING_FILE_SIZE_BYTES:
+        _logger.warning(
+            "Input file >1GB: approaching safe limit (10GB). Monitor memory usage."
+        )
+    # Soft warning: high risk zone
+    elif size > SOFT_WARNING_FILE_SIZE_BYTES:
+        _logger.warning(
+            "Large input file detected (>5GB). Runtime memory pressure possible."
+        )
+
     if size > MAX_FILE_SIZE_BYTES:
         raise DataLoaderError(
             f"File size {size} exceeds maximum allowed {MAX_FILE_SIZE_BYTES} bytes"
         )
     if extension in (".csv", ".tsv"):
         estimated_rows = size // AVG_CSV_ROW_BYTES
+        if estimated_rows > CAUTION_EST_ROWS and estimated_rows <= SOFT_WARNING_EST_ROWS:
+            _logger.warning(
+                "Estimated CSV/TSV rows >10M: approaching safe limit (200M). Monitor performance."
+            )
+        elif estimated_rows > SOFT_WARNING_EST_ROWS:
+            _logger.warning(
+                "Very large estimated row count (>100M). Runtime performance may degrade."
+            )
         if estimated_rows > MAX_ESTIMATED_CSV_ROWS:
             raise DataLoaderError(
                 f"Estimated CSV/TSV rows ({estimated_rows}) exceed limit {MAX_ESTIMATED_CSV_ROWS}"
@@ -575,7 +645,10 @@ def load_fusion_data(file_path: str) -> pd.DataFrame:
     
     # STEP 2: Verify all required columns are present
     validate_schema(df, REQUIRED_FUSION_FIELDS)
-    
+
+    # STEP 3: Enforce numeric constraints (fusion_schema.yaml)
+    _validate_fusion_numeric_constraints(df)
+
     # Return the validated data
     return df
 

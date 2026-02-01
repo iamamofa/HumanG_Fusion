@@ -387,13 +387,13 @@ def ensure_frozen_input(
     # Create frozen directory using hash prefix for deterministic naming
     hash_prefix = file_hash[:HASH_PREFIX_LENGTH]
     frozen_dir = frozen_root / hash_prefix
-    
+
     # Create frozen_root if it doesn't exist
     try:
         frozen_root.mkdir(parents=True, exist_ok=True)
     except (IOError, OSError) as e:
         raise FreezeError(f"ERROR: Failed to freeze dataset — diagnostics aborted: {e}") from e
-    
+
     # Check if directory already exists (idempotency check)
     if frozen_dir.exists():
         if _validate_frozen_snapshot(frozen_dir):
@@ -405,42 +405,41 @@ def ensure_frozen_input(
                 shutil.rmtree(frozen_dir)
             except (IOError, OSError) as e:
                 raise FreezeError(f"ERROR: Failed to freeze dataset — diagnostics aborted: {e}") from e
-    
-    # Create frozen directory
+
+    # Parallel-safe: create staging dir with unique name, populate, then publish atomically
     try:
-        frozen_dir.mkdir(parents=True, exist_ok=True)
+        staging_dir = Path(tempfile.mkdtemp(prefix=f"{hash_prefix}.", suffix=".tmp", dir=str(frozen_root)))
     except (IOError, OSError) as e:
         raise FreezeError(f"ERROR: Failed to freeze dataset — diagnostics aborted: {e}") from e
-    
+
     # =========================================================================
-    # STEP 4: Copy input file to frozen directory
+    # STEP 4: Copy input file to staging directory
     # =========================================================================
     original_filename = input_path.name
-    frozen_file_path = frozen_dir / original_filename
+    frozen_file_path = staging_dir / original_filename
     
     try:
         shutil.copy2(input_path, frozen_file_path)
     except (IOError, OSError) as e:
-        # Clean up partial freeze
         try:
-            shutil.rmtree(frozen_dir)
+            shutil.rmtree(staging_dir)
         except Exception:
             pass
         raise FreezeError(f"ERROR: Failed to freeze dataset — diagnostics aborted: {e}") from e
-    
+
     # Verify copy integrity
     try:
         copied_hash = _compute_file_hash(frozen_file_path)
         if copied_hash != file_hash:
-            shutil.rmtree(frozen_dir)
+            shutil.rmtree(staging_dir)
             raise FreezeError("ERROR: Failed to freeze dataset — diagnostics aborted: Copy verification failed")
     except FreezeError:
         try:
-            shutil.rmtree(frozen_dir)
+            shutil.rmtree(staging_dir)
         except Exception:
             pass
         raise
-    
+
     # =========================================================================
     # STEP 5: Write manifest
     # =========================================================================
@@ -452,25 +451,24 @@ def ensure_frozen_input(
         week2_version=WEEK2_VERSION,
         original_filename=original_filename,
     )
-    
-    manifest_path = frozen_dir / MANIFEST_FILENAME
+
+    manifest_path = staging_dir / MANIFEST_FILENAME
     try:
         _write_manifest(manifest, manifest_path)
     except FreezeError as e:
-        # Clean up partial freeze
         try:
-            shutil.rmtree(frozen_dir)
+            shutil.rmtree(staging_dir)
         except Exception:
             pass
         raise FreezeError(f"ERROR: Failed to freeze dataset — diagnostics aborted: {e}") from e
-    
+
     # =========================================================================
     # STEP 6: Create .frozen marker file (atomic write)
     # =========================================================================
-    marker_path = frozen_dir / FROZEN_MARKER_FILENAME
+    marker_path = staging_dir / FROZEN_MARKER_FILENAME
     try:
         fd, tmp_marker = tempfile.mkstemp(
-            prefix=".frozen.", dir=frozen_dir
+            prefix=".frozen.", dir=str(staging_dir)
         )
         try:
             os.close(fd)
@@ -482,15 +480,32 @@ def ensure_frozen_input(
                 pass
             raise
     except (IOError, OSError) as e:
-        # Clean up partial freeze
         try:
-            shutil.rmtree(frozen_dir)
+            shutil.rmtree(staging_dir)
         except Exception:
             pass
         raise FreezeError(f"ERROR: Failed to freeze dataset — diagnostics aborted: {e}") from e
-    
+
     # =========================================================================
-    # STEP 7: Final validation and success
+    # STEP 7: Atomic publish — rename staging to frozen_dir
+    # =========================================================================
+    try:
+        Path(staging_dir).rename(frozen_dir)
+    except (IOError, OSError) as rename_err:
+        # Destination may exist (another process won the race)
+        try:
+            shutil.rmtree(staging_dir)
+        except Exception:
+            pass
+        if frozen_dir.exists() and _validate_frozen_snapshot(frozen_dir):
+            print("Dataset already frozen — using existing frozen snapshot")
+            return frozen_dir
+        raise FreezeError(
+            f"ERROR: Failed to freeze dataset — diagnostics aborted: {rename_err}"
+        ) from rename_err
+
+    # =========================================================================
+    # STEP 8: Final validation and success
     # =========================================================================
     if not _validate_frozen_snapshot(frozen_dir):
         try:
@@ -498,9 +513,9 @@ def ensure_frozen_input(
         except Exception:
             pass
         raise FreezeError("ERROR: Failed to freeze dataset — diagnostics aborted: Final validation failed")
-    
+
     print("Freeze complete — diagnostics may now proceed")
-    
+
     return frozen_dir
 
 

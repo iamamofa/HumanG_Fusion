@@ -11,9 +11,29 @@ import traceback
 
 from week2_validation.runtime.exit_codes import Week2ExitCode
 
+# Module-scope exception types for classification (avoids import-time fragility in _classify_exception)
+try:
+    from week2_validation.utils.freeze import FreezeError
+    from week2_validation.run_week2 import ConfigurationError, PipelineError
+except Exception:
+    class _Unimported:
+        pass
+    FreezeError = _Unimported
+    ConfigurationError = _Unimported
+    PipelineError = _Unimported
+
 
 def _classify_exception(exc: BaseException) -> Week2ExitCode:
     """Classify exception to deterministic exit code."""
+    # Schema/input validation first (including in cause chain) for consistent exit 10
+    try:
+        from week2_validation.utils.data_loader import SchemaValidationError
+
+        if isinstance(exc, SchemaValidationError):
+            return Week2ExitCode.INPUT_SCHEMA_ERROR
+    except ImportError:
+        pass
+
     # Unwrap cause/context for wrapped exceptions
     cause = getattr(exc, "__cause__", None) or getattr(exc, "__context__", None)
     if cause is not None:
@@ -22,35 +42,18 @@ def _classify_exception(exc: BaseException) -> Week2ExitCode:
             return code
 
     # Freeze failures (explicit type; no message-based detection)
-    try:
-        from week2_validation.utils.freeze import FreezeError
-
-        if isinstance(exc, FreezeError):
-            return Week2ExitCode.FREEZE_ERROR
-    except ImportError:
-        pass
+    if isinstance(exc, FreezeError):
+        return Week2ExitCode.FREEZE_ERROR
 
     # Pipeline / configuration errors (explicit types)
-    try:
-        from week2_validation.run_week2 import ConfigurationError, PipelineError
+    if isinstance(exc, ConfigurationError):
+        return Week2ExitCode.CONFIG_ERROR
+    if isinstance(exc, PipelineError):
+        return Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR
 
-        if isinstance(exc, ConfigurationError):
-            return Week2ExitCode.CONFIG_ERROR
-        if isinstance(exc, PipelineError):
-            return Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR
-    except ImportError:
-        pass
-
-    # Schema / input validation
+    # Schema / input validation (ValueError, e.g. from adapters)
     if isinstance(exc, ValueError):
         return Week2ExitCode.INPUT_SCHEMA_ERROR
-    try:
-        from week2_validation.utils.data_loader import SchemaValidationError
-
-        if isinstance(exc, SchemaValidationError):
-            return Week2ExitCode.INPUT_SCHEMA_ERROR
-    except ImportError:
-        pass
 
     # Config / YAML errors (loader module)
     try:
