@@ -166,12 +166,12 @@ def validate_file_path(file_path: str, must_exist: bool = True) -> Path:
         raise FileValidationError(f"Cannot resolve file path: {e}") from e
 
     # CHECK 5: Security check for directory traversal attempts
-    # Block any path component exactly equal to ".." (blocks .... and other variants)
+    # Block any path component containing ".." (blocks .., ...., ..foo, etc.)
     try:
         parts = path.parts
     except (TypeError, ValueError):
         raise FileValidationError("Invalid path structure") from None
-    if ".." in parts:
+    if any(".." in str(p) for p in parts):
         raise FileValidationError(
             "Directory traversal patterns detected in path"
         )

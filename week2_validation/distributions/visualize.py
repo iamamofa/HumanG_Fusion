@@ -41,6 +41,7 @@ from __future__ import annotations
 import math
 import warnings
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, Union
 
 # =============================================================================
@@ -932,6 +933,197 @@ def run_diagnostics(
 
 
 # =============================================================================
+# DYNAMIC SKEWNESS INDICATOR (dataset-specific diagnostic)
+# =============================================================================
+def generate_dynamic_skewness_plot(
+    skew_value: float,
+    output_path: Path,
+) -> Optional[Path]:
+    """
+    Generate a Live Skewness Indicator: a two-panel figure showing (1) a horizontal
+    gauge marking the dataset's skewness, and (2) a skew-normal density curve that
+    visually mimics that skewness.
+
+    Parameters
+    ----------
+    skew_value : float
+        The calculated skewness of the dataset.
+    output_path : Path
+        Full path for the output PNG (e.g. output_dir / "skewness_diagnostic.png").
+
+    Returns
+    -------
+    Optional[Path]
+        Path to the saved file, or None if save failed.
+    """
+    try:
+        skew_val = float(skew_value)
+        if not math.isfinite(skew_val):
+            return None
+    except (TypeError, ValueError):
+        return None
+
+    try:
+        fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+
+        # ----- SUBPLOT 1: The Scale (horizontal gauge) -----
+        ax1 = axes[0]
+        ax1.set_xlim(-2, 2)
+        ax1.set_ylim(0, 1)
+        ax1.set_yticks([])
+        ax1.set_xlabel("Skewness")
+        ax1.set_title("Skewness Scale")
+        # Zone backgrounds
+        ax1.axvspan(-2, -0.5, alpha=0.2, color="steelblue", label="Negative Skew")
+        ax1.axvspan(-0.5, 0.5, alpha=0.2, color="lightgray", label="Symmetrical")
+        ax1.axvspan(0.5, 2, alpha=0.2, color="coral", label="Positive Skew")
+        # Zone labels
+        ax1.text(-1.25, 0.5, "Negative\nSkew", ha="center", va="center", fontsize=9)
+        ax1.text(0, 0.5, "Symmetrical", ha="center", va="center", fontsize=9)
+        ax1.text(1.25, 0.5, "Positive\nSkew", ha="center", va="center", fontsize=9)
+        # Red vertical line at skew value (clamp to visible range)
+        mark = max(-2, min(2, skew_val))
+        ax1.axvline(mark, color="red", linewidth=2, label=f"Dataset: {skew_val:.3f}")
+        ax1.legend(loc="upper right", fontsize=8)
+        ax1.grid(axis="x", alpha=0.5)
+
+        # ----- SUBPLOT 2: The Shape (skew-normal density) -----
+        ax2 = axes[1]
+        # skewnorm achieves skewness roughly in [-0.99, 0.99]; clamp for stability
+        target = max(-0.98, min(0.98, skew_val))
+        a_param = 0.0
+        if _SCIPY_AVAILABLE and scipy is not None:
+            try:
+                from scipy.optimize import minimize_scalar
+                def err(a):
+                    s = scipy.stats.skewnorm.stats(a, moments="s")
+                    return (float(s) - target) ** 2
+                res = minimize_scalar(err, bounds=(-20, 20), method="bounded")
+                a_param = float(res.x) if res.success else (5.0 if target > 0 else -5.0)
+            except Exception:
+                a_param = 5.0 if target > 0 else (-5.0 if target < 0 else 0.0)
+
+        x = np.linspace(-3, 3, 300)
+        if _SCIPY_AVAILABLE and scipy is not None:
+            pdf = scipy.stats.skewnorm.pdf(x, a_param)
+        else:
+            pdf = np.exp(-0.5 * x**2) / np.sqrt(2 * np.pi)  # fallback: normal
+        ax2.fill_between(x, pdf, alpha=0.5, color="steelblue")
+        ax2.plot(x, pdf, color="steelblue", linewidth=2)
+        ax2.set_xlabel("Value (standardized)")
+        ax2.set_ylabel("Density")
+        ax2.set_title(f"Theoretical Shape (skew ≈ {skew_val:.3f})")
+        ax2.set_ylim(0, None)
+        ax2.grid(alpha=0.3)
+
+        fig.suptitle("Live Skewness Indicator", fontsize=12, fontweight="bold", y=1.02)
+        plt.tight_layout()
+        out = Path(output_path)
+        fig.savefig(out, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        return out
+    except Exception:
+        return None
+
+
+# =============================================================================
+# SKEWNESS REFERENCE PLOT (educational guide for report)
+# =============================================================================
+def generate_skewness_reference_plot(output_path: Path) -> Optional[Path]:
+    """
+    Generate a 1x3 subplot figure showing Left-Skewed, Symmetrical, and Right-Skewed
+    distributions. Saves as skewness_reference.png for use in the narrative report.
+
+    Parameters
+    ----------
+    output_path : Path
+        Full path for the output PNG file (e.g. output_dir / "skewness_reference.png").
+
+    Returns
+    -------
+    Optional[Path]
+        Path to the saved file, or None if save failed.
+    """
+    try:
+        rng = np.random.default_rng(42)
+        n = 2000
+
+        # Generate representative distributions
+        if _SCIPY_AVAILABLE and scipy is not None:
+            left_skewed = scipy.stats.beta.rvs(5, 2, size=n, random_state=42)
+            symmetric = scipy.stats.norm.rvs(0.5, 0.12, size=n, random_state=42)
+            right_skewed = scipy.stats.beta.rvs(2, 5, size=n, random_state=42)
+        else:
+            # NumPy fallback: use lognormal and normal
+            left_skewed = 1.0 - np.exp(rng.standard_normal(n) * 0.5)
+            left_skewed = np.clip(left_skewed, 0.01, 0.99)
+            symmetric = 0.5 + rng.standard_normal(n) * 0.12
+            right_skewed = np.exp(rng.standard_normal(n) * 0.5) * 0.3
+            right_skewed = np.clip(right_skewed, 0.01, 0.99)
+
+        fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+
+        axes[0].hist(left_skewed, bins=40, color="steelblue", edgecolor="white", density=True)
+        axes[0].set_title("Left-Skewed (Negative)")
+        axes[0].set_xlabel("Value")
+        axes[0].set_ylabel("Density")
+
+        axes[1].hist(symmetric, bins=40, color="steelblue", edgecolor="white", density=True)
+        axes[1].set_title("Symmetrical (Zero Skew)")
+        axes[1].set_xlabel("Value")
+        axes[1].set_ylabel("Density")
+
+        axes[2].hist(right_skewed, bins=40, color="steelblue", edgecolor="white", density=True)
+        axes[2].set_title("Right-Skewed (Positive)")
+        axes[2].set_xlabel("Value")
+        axes[2].set_ylabel("Density")
+
+        fig.suptitle("Skewness Reference Guide", fontsize=12, fontweight="bold", y=1.02)
+        plt.tight_layout()
+        out = Path(output_path)
+        fig.savefig(out, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        return out
+    except Exception:
+        return None
+
+
+# =============================================================================
+# VISUALIZATION SAVING (when --run-diagnostics is active)
+# =============================================================================
+def save_protein_distribution_png(
+    result: "DiagnosticResult",
+    output_dir: Path,
+    filename: str = "protein_distribution.png",
+) -> Optional[Path]:
+    """
+    Save the protein length histogram (linear scale) as a PNG file to the output directory.
+
+    Called automatically when --run-diagnostics is active.
+
+    Parameters
+    ----------
+    result : DiagnosticResult
+        Result from run_diagnostics containing figure_linear.
+    output_dir : Path
+        Directory where the PNG will be saved (typically --output-dir).
+    filename : str, optional
+        Output filename. Default is "protein_distribution.png".
+
+    Returns
+    -------
+    Optional[Path]
+        Path to the saved file, or None if save failed.
+    """
+    try:
+        out_path = Path(output_dir) / filename
+        result.figure_linear.savefig(out_path, dpi=150, bbox_inches="tight")
+        return out_path
+    except Exception:
+        return None
+
+
+# =============================================================================
 # CONVENIENCE FUNCTIONS
 # =============================================================================
 def get_statistics_dict(data: ArrayLike) -> Dict[str, Any]:
@@ -1031,6 +1223,10 @@ def check_pandas_availability() -> Dict[str, Any]:
 __all__ = [
     # Primary entry point
     "run_diagnostics",
+    # Visualization saving
+    "save_protein_distribution_png",
+    "generate_skewness_reference_plot",
+    "generate_dynamic_skewness_plot",
     # Result containers
     "DiagnosticResult",
     "DescriptiveStatistics",

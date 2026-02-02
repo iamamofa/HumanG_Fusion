@@ -42,10 +42,9 @@ Usage:
     python -m week2_validation.run_week2 \\
         --fusion-data /path/to/fusion_data.csv \\
         --output-dir /path/to/output \\
+        [--run-all] \\
         [--cosmic-data /path/to/cosmic.tsv] \\
-        [--run-diagnostics] \\
-        [--run-benford] \\
-        [--run-lognormal] \\
+        [--run-diagnostics] [--run-benford] [--run-lognormal] [--run-benford-controls] \\
         [--dry-run]
 
 Security considerations:
@@ -62,6 +61,7 @@ Security considerations:
 
 # 'argparse' helps read and understand command-line arguments (user instructions)
 import argparse
+import math
 # 'json' for writing status envelope
 import json
 # 'sys' provides access to system functions like exiting the program
@@ -185,6 +185,7 @@ class PipelineConfig:
     run_lognormal: bool             # True = run log-normality diagnostics (if frozen), False = skip
     run_cosmic: bool                # True = run COSMIC rank-order diagnostics (if frozen), False = skip
     run_benford_controls: bool      # True = run Benford implementation self-tests (synthetic data), False = skip
+    generate_report: bool           # True = generate Statistical_Integrity_Report_Week2.md at end
 
 
 # =============================================================================
@@ -305,6 +306,17 @@ def create_argument_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    # Define the run-all flag (OPTIONAL) - convenience to run full pipeline
+    optional_group.add_argument(
+        "--run-all",
+        action="store_true",
+        default=False,
+        help=(
+            "Run full pipeline: distribution, Benford, log-normality, Benford controls, and COSMIC. "
+            "Equivalent to --run-diagnostics --run-benford --run-lognormal --run-benford-controls --run-cosmic."
+        ),
+    )
+
     # Define the run-diagnostics flag (OPTIONAL)
     # This explicitly requests distribution diagnostic analysis to run
     # IMPORTANT: Diagnostics only run if dataset is also frozen
@@ -376,6 +388,17 @@ def create_argument_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    # Define the generate-report flag (OPTIONAL)
+    optional_group.add_argument(
+        "--generate-report",
+        action="store_true",
+        default=False,
+        help=(
+            "Generate a researcher-friendly Markdown report "
+            "(Statistical_Integrity_Report_Week2.md) from the run outputs."
+        ),
+    )
+
     # Define the dry-run flag (OPTIONAL)
     # When set, the program only checks inputs without running full analysis
     optional_group.add_argument(
@@ -441,17 +464,19 @@ def validate_arguments(args: argparse.Namespace) -> PipelineConfig:
             raise ConfigurationError(f"Invalid COSMIC data path: {e}") from e
 
     # STEP 4: Create and return the configuration object
-    # This packages all validated settings together
+    # --run-all enables all diagnostic flags (distribution, Benford, log-normality, Benford controls, COSMIC)
+    run_all = getattr(args, "run_all", False)
     return PipelineConfig(
         fusion_data_path=fusion_path,
         output_dir=output_dir,
         cosmic_data_path=cosmic_path,
         dry_run=args.dry_run,
-        run_diagnostics=args.run_diagnostics,
-        run_benford=args.run_benford,
-        run_lognormal=args.run_lognormal,
-        run_cosmic=args.run_cosmic,
-        run_benford_controls=args.run_benford_controls,
+        run_diagnostics=args.run_diagnostics or run_all,
+        run_benford=args.run_benford or run_all,
+        run_lognormal=args.run_lognormal or run_all,
+        run_cosmic=args.run_cosmic or run_all,
+        run_benford_controls=args.run_benford_controls or run_all,
+        generate_report=getattr(args, "generate_report", False),
     )
 
 
@@ -565,6 +590,7 @@ def execute_diagnostics(
     config: PipelineConfig,
     week2_config: Week2Config,
     frozen_data_path: Optional[Path] = None,
+    run_metadata: Optional[dict] = None,
 ) -> int:
     """
     Execute diagnostic analysis on the fusion dataset.
@@ -593,7 +619,10 @@ def execute_diagnostics(
     # the user only wants to validate inputs.
     # -------------------------------------------------------------------------
     try:
-        from week2_validation.distributions.visualize import run_diagnostics
+        from week2_validation.distributions.visualize import (
+            run_diagnostics,
+            save_protein_distribution_png,
+        )
     except ImportError as e:
         print(f"Error: Cannot import diagnostic module: {e}", file=sys.stderr)
         print("Make sure all required dependencies are installed.", file=sys.stderr)
@@ -640,13 +669,42 @@ def execute_diagnostics(
         print(f"  Mean: {result.statistics.mean:.2f}")
         print(f"  Median: {result.statistics.median:.2f}")
         print(f"  Std Dev: {result.statistics.std:.2f}")
+        print(f"  Skewness: {result.statistics.skewness:.4f}")
         print()
         print(f"  Log mode used: {result.log_mode_used}")
         print(f"  Diagnostic only: {result.metadata.diagnostic_only}")
         print(f"  Hypothesis tested: {result.metadata.hypothesis_tested}")
         print()
+        # Record skewness in data_quality for week2_status.json (JSON-serializable)
+        if run_metadata is not None and "data_quality" in run_metadata:
+            sk = float(result.statistics.skewness)
+            run_metadata["data_quality"]["skewness"] = (
+                round(sk, 6) if math.isfinite(sk) else None
+            )
+        # Record distribution for narrative report (diagnostic_results)
+        if run_metadata is not None:
+            run_metadata.setdefault("diagnostic_results", {})["distribution"] = {
+                "minimum": round(float(result.statistics.minimum), 6),
+                "maximum": round(float(result.statistics.maximum), 6),
+                "mean": round(float(result.statistics.mean), 6),
+                "median": round(float(result.statistics.median), 6),
+                "std": round(float(result.statistics.std), 6),
+                "skewness": round(float(result.statistics.skewness), 6)
+                if math.isfinite(float(result.statistics.skewness))
+                else None,
+            }
+        # Save protein distribution histogram to output-dir when --run-diagnostics is active
+        try:
+            saved_path = save_protein_distribution_png(
+                result, config.output_dir, filename="protein_distribution.png"
+            )
+            if saved_path is not None:
+                print(f"Protein distribution saved: {saved_path.name}")
+        except Exception as save_err:
+            print(f"Warning: Could not save histogram: {save_err}", file=sys.stderr)
+        print()
         print("Diagnostic analysis complete.")
-        print("NOTE: Results are diagnostic only. No files saved. No interpretation provided.")
+        print("NOTE: Results are diagnostic only. No interpretation provided.")
         
     except Exception as e:
         print(f"Error during diagnostic analysis: {e}", file=sys.stderr)
@@ -663,6 +721,7 @@ def execute_benford_diagnostics(
     config: PipelineConfig,
     week2_config: Week2Config,
     frozen_data_path: Optional[Path] = None,
+    run_metadata: Optional[dict] = None,
 ) -> int:
     """
     Execute Benford's Law diagnostic analysis on the fusion dataset.
@@ -754,6 +813,23 @@ def execute_benford_diagnostics(
                     print(f"  Reason: {result.metadata.reason_if_not_applicable}")
                 if result.metadata.scale_span_orders_of_magnitude is not None:
                     print(f"  Scale span: {result.metadata.scale_span_orders_of_magnitude:.2f} orders of magnitude")
+                    if run_metadata is not None:
+                        run_metadata["benford_scale_span"] = result.metadata.scale_span_orders_of_magnitude
+            # Record Benford results for narrative report
+            if run_metadata is not None:
+                obs = {int(k): round(float(v), 6) for k, v in result.observed_frequencies.items()}
+                exp = {int(k): round(float(v), 6) for k, v in result.expected_frequencies.items()}
+                run_metadata.setdefault("diagnostic_results", {})["benford"] = {
+                    "observed_frequencies": obs,
+                    "expected_frequencies": exp,
+                    "scale_span_orders_of_magnitude": (
+                        round(float(result.metadata.scale_span_orders_of_magnitude), 4)
+                        if result.metadata.scale_span_orders_of_magnitude is not None
+                        else None
+                    ),
+                    "applicability": result.metadata.benford_applicable,
+                    "reason_if_not_applicable": result.metadata.reason_if_not_applicable or "",
+                }
         
         print()
         print("Benford diagnostic analysis complete.")
@@ -775,6 +851,7 @@ def execute_log_normality_diagnostics(
     config: PipelineConfig,
     week2_config: Week2Config,
     frozen_data_path: Optional[Path] = None,
+    run_metadata: Optional[dict] = None,
 ) -> int:
     """
     Execute log-normality diagnostic analysis on the fusion dataset.
@@ -862,6 +939,21 @@ def execute_log_normality_diagnostics(
                 print(f"  Anderson-Darling statistic: {result.ad_statistic:.6f}")
             else:
                 print("  Anderson-Darling statistic: not computed (requires SciPy)")
+            # Record log-normality results for narrative report
+            if run_metadata is not None:
+                run_metadata.setdefault("diagnostic_results", {})["log_normality"] = {
+                    "ks_statistic": (
+                        round(float(result.ks_statistic), 6)
+                        if result.ks_statistic is not None and math.isfinite(result.ks_statistic)
+                        else None
+                    ),
+                    "ad_statistic": (
+                        round(float(result.ad_statistic), 6)
+                        if result.ad_statistic is not None and math.isfinite(result.ad_statistic)
+                        else None
+                    ),
+                    "scipy_available": result.scipy_available,
+                }
         
         print()
         print("Log-normality diagnostic analysis complete.")
@@ -884,7 +976,8 @@ def execute_cosmic_diagnostics(
     config: PipelineConfig,
     week2_config: Week2Config,
     frozen_data_path: Optional[Path] = None,
-) -> int:
+    run_metadata: Optional[dict] = None,
+) -> tuple[int, bool]:
     """
     Execute COSMIC rank-order diagnostic analysis.
     
@@ -908,7 +1001,8 @@ def execute_cosmic_diagnostics(
         frozen_data_path: Path to frozen data file (if provided, used instead of config path).
     
     Returns:
-        Exit code: 0 for success, 1 for execution failure.
+        Tuple of (result_code, cosmic_loaded). result_code: 0 for success, non-zero for failure.
+        cosmic_loaded: True if COSMIC reference was requested and loaded, False otherwise.
     """
     print("Starting COSMIC rank-order diagnostic analysis...")
     print()
@@ -989,6 +1083,15 @@ def execute_cosmic_diagnostics(
         
         print()
         print("COSMIC rank-order diagnostic analysis complete.")
+        # Record COSMIC results for narrative report
+        if run_metadata is not None:
+            run_metadata.setdefault("diagnostic_results", {})["cosmic"] = {
+                "total_fusions_ours": result["total_fusions_ours"],
+                "total_fusions_cosmic": result["total_fusions_cosmic"],
+                "overlap_count": result["overlap_count"],
+                "only_in_ours_count": result["only_in_ours_count"],
+                "only_in_cosmic_count": result["only_in_cosmic_count"],
+            }
         print()
         print("NOTE: COSMIC diagnostics are DESCRIPTIVE ONLY.")
         print("No inference, no statistical tests, no validation conclusions are drawn.")
@@ -1369,7 +1472,11 @@ def run_pipeline(config: PipelineConfig) -> int:
         # Uses frozen_input_path to ensure diagnostics operate on immutable data
         if config.run_diagnostics:
             check_runtime_guard()
-            result = execute_diagnostics(config, week2_config, frozen_data_path=effective_data_path)
+            result = execute_diagnostics(
+                config, week2_config,
+                frozen_data_path=effective_data_path,
+                run_metadata=_run_metadata,
+            )
             check_runtime_guard()
             if result != 0:
                 exit_code = result
@@ -1379,7 +1486,11 @@ def run_pipeline(config: PipelineConfig) -> int:
         # Uses frozen_input_path to ensure diagnostics operate on immutable data
         if config.run_benford:
             check_runtime_guard()
-            result = execute_benford_diagnostics(config, week2_config, frozen_data_path=effective_data_path)
+            result = execute_benford_diagnostics(
+                config, week2_config,
+                frozen_data_path=effective_data_path,
+                run_metadata=_run_metadata,
+            )
             check_runtime_guard()
             if result != 0:
                 exit_code = result
@@ -1389,7 +1500,11 @@ def run_pipeline(config: PipelineConfig) -> int:
         # Uses frozen_input_path to ensure diagnostics operate on immutable data
         if config.run_lognormal:
             check_runtime_guard()
-            result = execute_log_normality_diagnostics(config, week2_config, frozen_data_path=effective_data_path)
+            result = execute_log_normality_diagnostics(
+                config, week2_config,
+                frozen_data_path=effective_data_path,
+                run_metadata=_run_metadata,
+            )
             check_runtime_guard()
             if result != 0:
                 exit_code = result
@@ -1399,7 +1514,11 @@ def run_pipeline(config: PipelineConfig) -> int:
         # Uses frozen_input_path to ensure diagnostics operate on immutable data
         if config.run_cosmic:
             check_runtime_guard()
-            result_code, cosmic_loaded = execute_cosmic_diagnostics(config, week2_config, frozen_data_path=effective_data_path)
+            result_code, cosmic_loaded = execute_cosmic_diagnostics(
+                config, week2_config,
+                frozen_data_path=effective_data_path,
+                run_metadata=_run_metadata,
+            )
             check_runtime_guard()
             if result_code != 0:
                 exit_code = result_code
@@ -1439,6 +1558,16 @@ def run_pipeline(config: PipelineConfig) -> int:
             except Exception as _e:
                 print(f"Warning: Approved dataset write skipped: {_e}", file=sys.stderr)
                 _run_metadata["approved_dataset_write_note"] = f"Write skipped: {type(_e).__name__}"
+
+        # Write diagnostic results for narrative report (when diagnostics ran)
+        diag_results = _run_metadata.get("diagnostic_results")
+        if diag_results:
+            try:
+                diag_path = config.output_dir / "week2_diagnostic_results.json"
+                with open(diag_path, "w", encoding="utf-8") as f:
+                    json.dump(diag_results, f, indent=2)
+            except OSError:
+                pass  # Non-fatal; report may use status/cert only
 
     return exit_code
 
@@ -1548,6 +1677,7 @@ def main() -> int:
         data_quality=meta.get("data_quality"),
         diagnostics_skipped=meta.get("diagnostics_skipped"),
         skip_reason=meta.get("skip_reason"),
+        benford_scale_span=meta.get("benford_scale_span"),
     )
     envelope["runtime_seconds"] = round(runtime_seconds, 2)
     status_path = config.output_dir / "week2_status.json"
@@ -1561,6 +1691,33 @@ def main() -> int:
         if exit_code == 0:
             exit_code = int(Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR)
         return exit_code
+
+    # Generate researcher-friendly narrative report when requested
+    if config.generate_report:
+        # Generate dynamic skewness plot when we have skewness (from diagnostics)
+        skewness_val = None
+        dq = _run_metadata.get("data_quality") or {}
+        diag_res = _run_metadata.get("diagnostic_results") or {}
+        dist = diag_res.get("distribution") or {}
+        for src in [dist.get("skewness"), dq.get("skewness")]:
+            if src is not None and isinstance(src, (int, float)) and math.isfinite(float(src)):
+                skewness_val = float(src)
+                break
+        if skewness_val is not None:
+            try:
+                from week2_validation.distributions.visualize import generate_dynamic_skewness_plot
+                skew_path = config.output_dir / "skewness_diagnostic.png"
+                if generate_dynamic_skewness_plot(skewness_val, skew_path) is not None:
+                    print(f"Skewness diagnostic saved: skewness_diagnostic.png")
+            except Exception as e:
+                print(f"Warning: Could not generate skewness diagnostic: {e}", file=sys.stderr)
+        try:
+            from week2_validation.reporting.narrative_generator import generate_narrative_report
+            report_path = generate_narrative_report(config.output_dir)
+            if report_path is not None:
+                print(f"Narrative report written: {report_path.name}")
+        except Exception as e:
+            print(f"Warning: Could not generate narrative report: {e}", file=sys.stderr)
 
     return exit_code
 

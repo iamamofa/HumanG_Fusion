@@ -124,7 +124,7 @@ week2_validation/
 | **Runtime** | < 100 s typical | 100–3600 s | 3600 s (RuntimeError) |
 | **Memory (RSS)** | < 2 GB typical | 2–8 GB | 8 GB (RuntimeError, requires psutil) |
 
-When you approach these limits, the pipeline may log warnings. If you exceed the hard limits, it will stop and report an error.
+When you approach these limits, the pipeline may log warnings. If you exceed the hard limits, it will stop and report an error. The 5 GB file size limit aligns with the 8 GB RAM runtime guard to prevent memory exhaustion.
 
 ---
 

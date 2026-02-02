@@ -597,6 +597,7 @@ def test_diagnostic_runtime_failure_exit_code_30():
             run_lognormal=False,
             run_cosmic=False,
             run_benford_controls=False,
+            generate_report=False,
         )
         with patch("week2_validation.run_week2.execute_diagnostics") as mock_exec:
             mock_exec.return_value = int(Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR)

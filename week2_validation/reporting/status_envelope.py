@@ -72,6 +72,7 @@ def build_status_envelope(
     data_quality: Optional[dict] = None,
     diagnostics_skipped: Optional[bool] = None,
     skip_reason: Optional[str] = None,
+    benford_scale_span: Optional[float] = None,
 ) -> dict:
     """
     Build machine-readable status envelope with runtime metadata.
@@ -104,6 +105,12 @@ def build_status_envelope(
     else:
         status = "PARTIAL"
 
+    # Scale-span warning: insufficient range for Benford/Power-Law modeling
+    notes_list = list(notes)
+    if benford_scale_span is not None and benford_scale_span < 2.0:
+        notes_list.append(
+            "WARNING: Statistical range insufficient for reliable Benford and Power-Law modeling."
+        )
     envelope = {
         "week2_version": WEEK2_VERSION,
         "run_timestamp_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -111,7 +118,7 @@ def build_status_envelope(
         "diagnostics_run": list(diagnostics_run),
         "exit_code": int(exit_code),
         "status": status,
-        "notes": _sanitize_notes(list(notes)),
+        "notes": _sanitize_notes(notes_list),
     }
     if cosmic_reference_loaded is not None:
         envelope["cosmic_reference_loaded"] = bool(cosmic_reference_loaded)
