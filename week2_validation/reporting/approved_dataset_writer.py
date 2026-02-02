@@ -13,7 +13,7 @@ import os
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 # Required columns per fusion_schema.yaml (contract only; no import from schemas)
 _REQUIRED_COLUMNS = frozenset({
@@ -44,18 +44,12 @@ def _resolve_output_path(output_dir: Path, filename: str) -> Path:
 
 def _read_frozen_dataset(path: Path):
     """
-    Read frozen dataset with pandas. Handles CSV/TSV by extension.
+    Read frozen dataset in any supported format (CSV, TSV, JSON, Parquet, Excel).
+    Uses data_loader.load_data for format-agnostic loading.
     Does not modify values, drop rows, or change dtypes (preserve as read).
     """
-    import pandas as pd
-
-    suffix = path.suffix.lower()
-    if suffix == ".tsv":
-        return pd.read_csv(path, sep="\t")
-    if suffix in (".csv",):
-        return pd.read_csv(path, sep=",")
-    # Default CSV
-    return pd.read_csv(path, sep=",")
+    from week2_validation.utils.data_loader import load_data
+    return load_data(str(path))
 
 
 def write_approved_dataset(
@@ -65,6 +59,7 @@ def write_approved_dataset(
     validation_passed: bool,
     diagnostics_run: List[str],
     runtime_metadata: Dict[str, Any],
+    dataset_stem: Optional[str] = None,
 ) -> Tuple[Path | None, Path | None]:
     """
     When validation_passed is True, write cleaned dataset snapshot and certification record.
@@ -106,8 +101,11 @@ def write_approved_dataset(
     if not frozen_dataset_path.is_file():
         return (None, None)
 
-    csv_path = _resolve_output_path(output_dir, CLEANED_DATASET_FILENAME)
-    cert_path = _resolve_output_path(output_dir, CERTIFICATION_FILENAME)
+    stem = dataset_stem if dataset_stem else "week2"
+    cleaned_name = f"week2_cleaned_dataset_{stem}.csv"
+    cert_name = f"week2_dataset_certification_{stem}.json"
+    csv_path = _resolve_output_path(output_dir, cleaned_name)
+    cert_path = _resolve_output_path(output_dir, cert_name)
     if csv_path is None or cert_path is None:
         return (None, None)
 

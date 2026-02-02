@@ -61,6 +61,7 @@ Security considerations:
 
 # 'argparse' helps read and understand command-line arguments (user instructions)
 import argparse
+import io
 import math
 # 'json' for writing status envelope
 import json
@@ -74,6 +75,58 @@ from dataclasses import dataclass
 from pathlib import Path
 # 'Optional' indicates that a value might be present or might be None (empty)
 from typing import Optional
+
+# =============================================================================
+# RUN LOG TEE (capture console output to file)
+# =============================================================================
+
+
+class _TeeWriter(io.TextIOBase):
+    """Writes to both an underlying stream and a log file."""
+
+    def __init__(self, stream, log_path: Path):
+        self._stream = stream
+        self._log_path = Path(log_path)
+
+    def write(self, s: str) -> int:
+        n = self._stream.write(s)
+        if n:
+            try:
+                with open(self._log_path, "a", encoding="utf-8") as f:
+                    f.write(s[:n])
+            except OSError:
+                pass
+        return n
+
+    def flush(self) -> None:
+        self._stream.flush()
+
+    def close(self) -> None:
+        if hasattr(self._stream, "close"):
+            self._stream.close()
+
+
+def _run_with_log_capture(config: "PipelineConfig", run_fn):
+    """Run pipeline while teeing stdout/stderr to run_log_{stem}.txt."""
+    log_path = config.output_dir / f"run_log_{config.dataset_stem}.txt"
+    try:
+        # Clear or create log file
+        log_path.write_text("", encoding="utf-8")
+    except OSError:
+        pass
+    old_stdout, old_stderr = sys.stdout, sys.stderr
+    tee_out = _TeeWriter(sys.stdout, log_path)
+    tee_err = _TeeWriter(sys.stderr, log_path)
+    try:
+        sys.stdout = tee_out
+        sys.stderr = tee_err
+        return run_fn()
+    finally:
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
+        tee_out.flush()
+        tee_err.flush()
+
 
 # =============================================================================
 # INTERNAL IMPORTS - Data Loading
@@ -178,6 +231,7 @@ class PipelineConfig:
 
     fusion_data_path: Path          # Where the fusion data file is located
     output_dir: Path                # Where to save the output/results
+    dataset_stem: str               # Input filename stem for dynamic output names (e.g. "demo_fusion")
     cosmic_data_path: Optional[Path]  # Optional reference data location (can be empty)
     dry_run: bool                   # True = just validate, False = run full analysis
     run_diagnostics: bool           # True = run distribution diagnostics (if frozen), False = skip
@@ -466,9 +520,11 @@ def validate_arguments(args: argparse.Namespace) -> PipelineConfig:
     # STEP 4: Create and return the configuration object
     # --run-all enables all diagnostic flags (distribution, Benford, log-normality, Benford controls, COSMIC)
     run_all = getattr(args, "run_all", False)
+    dataset_stem = fusion_path.stem  # e.g. "demo_fusion" from "demo_fusion.parquet"
     return PipelineConfig(
         fusion_data_path=fusion_path,
         output_dir=output_dir,
+        dataset_stem=dataset_stem,
         cosmic_data_path=cosmic_path,
         dry_run=args.dry_run,
         run_diagnostics=args.run_diagnostics or run_all,
@@ -1551,6 +1607,7 @@ def run_pipeline(config: PipelineConfig) -> int:
                     validation_passed=True,
                     diagnostics_run=_run_metadata["diagnostics_run"],
                     runtime_metadata=_runtime_meta,
+                    dataset_stem=config.dataset_stem,
                 )
                 if _csv_p is not None and _cert_p is not None:
                     print(f"Cleaned dataset written: {_csv_p.name}")
@@ -1563,7 +1620,7 @@ def run_pipeline(config: PipelineConfig) -> int:
         diag_results = _run_metadata.get("diagnostic_results")
         if diag_results:
             try:
-                diag_path = config.output_dir / "week2_diagnostic_results.json"
+                diag_path = config.output_dir / f"week2_diagnostic_results_{config.dataset_stem}.json"
                 with open(diag_path, "w", encoding="utf-8") as f:
                     json.dump(diag_results, f, indent=2)
             except OSError:
@@ -1640,85 +1697,119 @@ def main() -> int:
             # Only return early if there was an unexpected exception
             return control_result
 
-    # Run pipeline with survivability layer
-    start_runtime_guard()
-    start_time = time.monotonic()
-    exit_code, status_msg = run_week2_safely(run_pipeline, config)
-    check_runtime_guard()
-    runtime_seconds = time.monotonic() - start_time
+    # Run pipeline with log capture (tee stdout/stderr to run_log_{stem}.txt)
+    def _execute():
+        start_runtime_guard()
+        start_time = time.monotonic()
+        exit_code, status_msg = run_week2_safely(run_pipeline, config)
+        check_runtime_guard()
+        runtime_seconds = time.monotonic() - start_time
 
-    # Optional dependency availability (observability only; no logic change)
-    try:
-        import scipy
-        scipy_available = True
-    except Exception:
-        scipy_available = False
-    try:
-        import psutil
-        psutil_available = True
-    except Exception:
-        psutil_available = False
+        # Optional dependency availability (observability only; no logic change)
+        try:
+            import scipy
+            scipy_available = True
+        except Exception:
+            scipy_available = False
+        try:
+            import psutil
+            psutil_available = True
+        except Exception:
+            psutil_available = False
 
-    # Always write status envelope
-    meta = _run_metadata
-    notes = [status_msg] if status_msg and status_msg != "OK" else []
-    if meta.get("cosmic_reference_loaded") is False:
-        notes.append("COSMIC_LOAD_FAILED")
-    cosmic_reference_requested = config.cosmic_data_path is not None
-    envelope = build_status_envelope(
-        dataset_hash=meta.get("dataset_hash", ""),
-        diagnostics_run=meta.get("diagnostics_run", []),
-        exit_code=exit_code,
-        notes=notes,
-        cosmic_reference_loaded=meta.get("cosmic_reference_loaded"),
-        cosmic_reference_requested=cosmic_reference_requested,
-        scipy_available=scipy_available,
-        psutil_available=psutil_available,
-        data_quality=meta.get("data_quality"),
-        diagnostics_skipped=meta.get("diagnostics_skipped"),
-        skip_reason=meta.get("skip_reason"),
-        benford_scale_span=meta.get("benford_scale_span"),
-    )
-    envelope["runtime_seconds"] = round(runtime_seconds, 2)
-    status_path = config.output_dir / "week2_status.json"
-    try:
-        with open(status_path, "w", encoding="utf-8") as f:
-            json.dump(envelope, f, indent=2)
-        print(f"Status written to {status_path}")
-    except OSError as e:
-        print(f"Could not write status file: {e}", file=sys.stderr)
-        # Status write failure always overrides success exit (FIX 4)
-        if exit_code == 0:
-            exit_code = int(Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR)
+        # Always write status envelope
+        meta = _run_metadata
+        notes = [status_msg] if status_msg and status_msg != "OK" else []
+        if meta.get("cosmic_reference_loaded") is False:
+            notes.append("COSMIC_LOAD_FAILED")
+        cosmic_reference_requested = config.cosmic_data_path is not None
+        envelope = build_status_envelope(
+            dataset_hash=meta.get("dataset_hash", ""),
+            diagnostics_run=meta.get("diagnostics_run", []),
+            exit_code=exit_code,
+            notes=notes,
+            cosmic_reference_loaded=meta.get("cosmic_reference_loaded"),
+            cosmic_reference_requested=cosmic_reference_requested,
+            scipy_available=scipy_available,
+            psutil_available=psutil_available,
+            data_quality=meta.get("data_quality"),
+            diagnostics_skipped=meta.get("diagnostics_skipped"),
+            skip_reason=meta.get("skip_reason"),
+            benford_scale_span=meta.get("benford_scale_span"),
+        )
+        envelope["runtime_seconds"] = round(runtime_seconds, 2)
+        status_path = config.output_dir / f"week2_status_{config.dataset_stem}.json"
+        try:
+            with open(status_path, "w", encoding="utf-8") as f:
+                json.dump(envelope, f, indent=2)
+            print(f"Status written to {status_path}")
+        except OSError as e:
+            print(f"Could not write status file: {e}", file=sys.stderr)
+            # Status write failure always overrides success exit (FIX 4)
+            if exit_code == 0:
+                exit_code = int(Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR)
+            return exit_code
+
+        # Generate researcher-friendly narrative report when requested
+        if config.generate_report:
+            # Generate dynamic skewness plot when we have skewness (from diagnostics)
+            skewness_val = None
+            dq = _run_metadata.get("data_quality") or {}
+            diag_res = _run_metadata.get("diagnostic_results") or {}
+            dist = diag_res.get("distribution") or {}
+            for src in [dist.get("skewness"), dq.get("skewness")]:
+                if src is not None and isinstance(src, (int, float)) and math.isfinite(float(src)):
+                    skewness_val = float(src)
+                    break
+            if skewness_val is not None:
+                try:
+                    from week2_validation.distributions.visualize import generate_dynamic_skewness_plot
+                    skew_path = config.output_dir / "skewness_diagnostic.png"
+                    if generate_dynamic_skewness_plot(skewness_val, skew_path) is not None:
+                        print(f"Skewness diagnostic saved: skewness_diagnostic.png")
+                except Exception as e:
+                    print(f"Warning: Could not generate skewness diagnostic: {e}", file=sys.stderr)
+            try:
+                from week2_validation.reporting.narrative_generator import generate_narrative_report
+                report_path = generate_narrative_report(config.output_dir, dataset_stem=config.dataset_stem)
+                if report_path is not None:
+                    print(f"Narrative report written: {report_path.name}")
+            except Exception as e:
+                print(f"Warning: Could not generate narrative report: {e}", file=sys.stderr)
+
+        # Failure report when validation/execution failed (paper trail for every file)
+        if exit_code != 0:
+            try:
+                from week2_validation.reporting.narrative_generator import generate_failure_report
+                _msg = str(status_msg or "").upper()
+                if exit_code == int(Week2ExitCode.INPUT_SCHEMA_ERROR) or "SCHEMA" in _msg or "MISSING" in _msg:
+                    reason = "Missing Columns or Data Type Mismatch"
+                elif exit_code == int(Week2ExitCode.CONFIG_ERROR):
+                    reason = "Configuration Error"
+                elif exit_code == int(Week2ExitCode.FREEZE_ERROR):
+                    reason = "Dataset Freeze Error"
+                elif "EMPTY" in _msg:
+                    reason = "Empty File"
+                else:
+                    reason = "Validation or Execution Failed"
+                fp = generate_failure_report(
+                    config.output_dir,
+                    config.dataset_stem,
+                    failure_reason=reason,
+                    failure_details=status_msg or "Unknown error",
+                )
+                if fp is not None:
+                    print(f"Failure report written: {fp.name}")
+            except Exception:
+                pass
+
         return exit_code
 
-    # Generate researcher-friendly narrative report when requested
-    if config.generate_report:
-        # Generate dynamic skewness plot when we have skewness (from diagnostics)
-        skewness_val = None
-        dq = _run_metadata.get("data_quality") or {}
-        diag_res = _run_metadata.get("diagnostic_results") or {}
-        dist = diag_res.get("distribution") or {}
-        for src in [dist.get("skewness"), dq.get("skewness")]:
-            if src is not None and isinstance(src, (int, float)) and math.isfinite(float(src)):
-                skewness_val = float(src)
-                break
-        if skewness_val is not None:
-            try:
-                from week2_validation.distributions.visualize import generate_dynamic_skewness_plot
-                skew_path = config.output_dir / "skewness_diagnostic.png"
-                if generate_dynamic_skewness_plot(skewness_val, skew_path) is not None:
-                    print(f"Skewness diagnostic saved: skewness_diagnostic.png")
-            except Exception as e:
-                print(f"Warning: Could not generate skewness diagnostic: {e}", file=sys.stderr)
-        try:
-            from week2_validation.reporting.narrative_generator import generate_narrative_report
-            report_path = generate_narrative_report(config.output_dir)
-            if report_path is not None:
-                print(f"Narrative report written: {report_path.name}")
-        except Exception as e:
-            print(f"Warning: Could not generate narrative report: {e}", file=sys.stderr)
-
+    exit_code = _run_with_log_capture(config, _execute)
+    try:
+        print(f"Run log saved: run_log_{config.dataset_stem}.txt")
+    except Exception:
+        pass
     return exit_code
 
 

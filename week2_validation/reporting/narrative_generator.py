@@ -14,10 +14,11 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 
-REPORT_FILENAME = "Statistical_Integrity_Report_Week2.md"
-STATUS_FILENAME = "week2_status.json"
-CERTIFICATION_FILENAME = "week2_dataset_certification.json"
-DIAGNOSTIC_RESULTS_FILENAME = "week2_diagnostic_results.json"
+STATUS_FILENAME_PATTERN = "week2_status_{stem}.json"
+CERTIFICATION_FILENAME_PATTERN = "week2_dataset_certification_{stem}.json"
+DIAGNOSTIC_RESULTS_FILENAME_PATTERN = "week2_diagnostic_results_{stem}.json"
+REPORT_FILENAME_PATTERN = "Statistical_Integrity_Report_{stem}.md"
+FAILURE_REPORT_FILENAME_PATTERN = "Failure_Report_{stem}.md"
 
 
 def _load_json(path: Path) -> Optional[Dict[str, Any]]:
@@ -227,6 +228,71 @@ def _section_4_benford(diag: Optional[Dict[str, Any]], notes: list) -> str:
 """
 
 
+def generate_failure_report(
+    output_dir: Path,
+    dataset_stem: str,
+    failure_reason: str,
+    failure_details: str = "",
+) -> Optional[Path]:
+    """
+    Generate a Markdown Failure Report when validation fails.
+
+    Provides a paper trail for every file that fails validation.
+
+    Args:
+        output_dir: Directory for the failure report.
+        dataset_stem: Stem from input filename.
+        failure_reason: Human-readable reason (e.g. "Missing Columns", "Empty File").
+        failure_details: Additional context or error message.
+
+    Returns:
+        Path to the written report, or None on write failure.
+    """
+    output_dir = Path(output_dir).resolve()
+    if not output_dir.is_dir():
+        try:
+            output_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return None
+
+    path = output_dir / FAILURE_REPORT_FILENAME_PATTERN.format(stem=dataset_stem)
+    content = f"""# Data Integrity Validation — Failure Report
+
+*Dataset: {dataset_stem}*
+
+---
+
+## Validation Status: **FAILED**
+
+## Failure Reason
+
+**{failure_reason}**
+
+"""
+    if failure_details:
+        content += f"""
+## Details
+
+```
+{failure_details}
+```
+
+"""
+
+    content += """
+---
+
+*This report was generated automatically when the dataset failed validation.*
+*No statistical analysis or certification was performed.*
+"""
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content)
+        return path
+    except OSError:
+        return None
+
+
 def _section_5_cosmic(diag: Optional[Dict[str, Any]]) -> str:
     """Build Section 5: COSMIC Cross-Validation."""
     cosmic = (diag or {}).get("cosmic") or {}
@@ -250,16 +316,19 @@ def _section_5_cosmic(diag: Optional[Dict[str, Any]]) -> str:
 """
 
 
-def generate_narrative_report(output_dir: Path) -> Optional[Path]:
+def generate_narrative_report(
+    output_dir: Path,
+    dataset_stem: str = "week2",
+) -> Optional[Path]:
     """
     Generate a researcher-friendly Markdown report from Week 2 output files.
 
-    Loads week2_status.json, week2_dataset_certification.json, and
-    week2_diagnostic_results.json from output_dir and produces
-    Statistical_Integrity_Report_Week2.md.
+    Loads status, certification, and diagnostic JSON from output_dir and produces
+    Statistical_Integrity_Report_{stem}.md.
 
     Args:
         output_dir: Directory containing the JSON output files.
+        dataset_stem: Stem from input filename (e.g. "demo_fusion" for demo_fusion.parquet).
 
     Returns:
         Path to the generated report file, or None if generation failed.
@@ -268,12 +337,16 @@ def generate_narrative_report(output_dir: Path) -> Optional[Path]:
     if not output_dir.is_dir():
         return None
 
-    status = _load_json(output_dir / STATUS_FILENAME)
+    status_path = output_dir / STATUS_FILENAME_PATTERN.format(stem=dataset_stem)
+    cert_path = output_dir / CERTIFICATION_FILENAME_PATTERN.format(stem=dataset_stem)
+    diag_path = output_dir / DIAGNOSTIC_RESULTS_FILENAME_PATTERN.format(stem=dataset_stem)
+
+    status = _load_json(status_path)
     if not status:
         return None
 
-    certification = _load_json(output_dir / CERTIFICATION_FILENAME)
-    diag = _load_json(output_dir / DIAGNOSTIC_RESULTS_FILENAME)
+    certification = _load_json(cert_path)
+    diag = _load_json(diag_path)
     notes = status.get("notes") or []
 
     sections = []
@@ -286,7 +359,7 @@ def generate_narrative_report(output_dir: Path) -> Optional[Path]:
     sections.append(_section_4_benford(diag, notes))
     sections.append(_section_5_cosmic(diag))
 
-    report_path = output_dir / REPORT_FILENAME
+    report_path = output_dir / REPORT_FILENAME_PATTERN.format(stem=dataset_stem)
     try:
         with open(report_path, "w", encoding="utf-8") as f:
             f.write("\n".join(sections))

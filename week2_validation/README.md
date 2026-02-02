@@ -135,9 +135,8 @@ This section describes how to run the Data Integrity & Statistical Validation pi
 ### Input Requirements
 
 - **Format:** CSV, TSV, JSON, Parquet, or Excel (.xlsx)
-- **Required columns:** Your spreadsheet or file must have these column names: `fusion_id`, `gene_1`, `gene_2`, `protein_length`, `recurrence_count`
-- **Valid values:** `protein_length` must be greater than 0; `recurrence_count` must be 0 or more
-- **No empty cells** in required columns
+- **Required columns:** `fusion_id`, `gene_1`, `gene_2`, `protein_length`, `recurrence_count`
+- **Valid values:** `protein_length` > 0; `recurrence_count` >= 0; no nulls in required columns
 
 - Be in a supported format: CSV, TSV, JSON, Parquet, or Excel (.xlsx)
 - Include these required columns: `fusion_id`, `gene_1`, `gene_2`, `protein_length`, `recurrence_count`

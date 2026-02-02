@@ -590,6 +590,7 @@ def test_diagnostic_runtime_failure_exit_code_30():
         config = PipelineConfig(
             fusion_data_path=fusion_file,
             output_dir=out_dir,
+            dataset_stem="fusion",
             cosmic_data_path=None,
             dry_run=False,
             run_diagnostics=True,
