@@ -1,0 +1,11 @@
+# Results folder - generated output from validation runs
+results/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Temporary files
+*.tmp
+.DS_Store

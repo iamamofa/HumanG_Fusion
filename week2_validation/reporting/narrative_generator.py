@@ -293,6 +293,95 @@ def generate_failure_report(
         return None
 
 
+def _build_method_justification_section() -> str:
+    """Build the statistical method justification section."""
+    return """
+
+### Statistical Method Justification
+
+The statistical methods used in this COSMIC cross-validation are specifically chosen for 
+their appropriateness to biological fusion recurrence data:
+
+**Spearman Rank Correlation**: Non-parametric method robust to the heavy-tailed, non-normal 
+distributions characteristic of recurrence count data. Measures rank-order agreement rather 
+than exact value correspondence, which is appropriate for comparing recurrence rankings 
+across different cohorts.
+
+**Bootstrap Confidence Intervals**: Provide uncertainty quantification without parametric 
+assumptions. Particularly important when overlap sample sizes are limited.
+
+**Hypergeometric Enrichment Test**: Tests whether top-ranked fusions overlap more than 
+expected by chance. Appropriate discrete model for sampling without replacement.
+
+**Negative Control Validation**: Distinguishes genuine biological signal from statistical 
+artifacts by comparing real correlation to shuffled null distribution.
+
+*For detailed methodology documentation, see `cosmic/statistical_methodology.md`.*
+"""
+
+
+def _build_biological_bias_disclosure() -> str:
+    """Build the biological bias disclosure section."""
+    return """
+
+### Biological Bias Disclosure
+
+**Important limitations of COSMIC reference data:**
+
+COSMIC (Catalogue of Somatic Mutations in Cancer) reflects inherent biases that affect 
+comparisons with any dataset:
+
+1. **Tumor Sampling Bias**: COSMIC over-represents commonly studied cancer types (e.g., 
+   breast, lung, colorectal) and under-represents rare cancers. Fusion frequencies reflect 
+   research attention, not true biological prevalence.
+
+2. **Detection Technology Bias**: Historical data reflects older sequencing technologies 
+   with different sensitivity profiles. Modern datasets may detect fusions missed in 
+   earlier studies.
+
+3. **Cohort Representation Bias**: COSMIC cohorts are not population-representative. 
+   Certain demographics, geographic regions, and healthcare systems are over-represented.
+
+4. **Publication Bias**: COSMIC aggregates published data, which skews toward positive 
+   findings and known driver fusions.
+
+**Interpretation guidance**: Statistical comparisons evaluate *plausibility and consistency* 
+with COSMIC patterns, not *exact biological equivalence*. Strong agreement suggests the 
+dataset contains biologically realistic fusion patterns; weak agreement does not necessarily 
+indicate data quality problems.
+"""
+
+
+def _build_mock_cosmic_compatibility_statement() -> str:
+    """Build the mock vs real COSMIC compatibility statement."""
+    return """
+
+### Mock COSMIC Compatibility Statement
+
+**Note:** This validation used a synthetic mock COSMIC dataset for reference.
+
+**Mock COSMIC is designed to preserve:**
+- Heavy tail recurrence distribution (power-law/Zipf-like)
+- Driver gene enrichment structure (BCR-ABL1, EML4-ALK, etc.)
+- Non-uniform recurrence behavior
+- Realistic gene pair counts (50+ fusion pairs)
+
+**Mock COSMIC does NOT replicate:**
+- Real COSMIC cohort structure
+- Actual variant frequencies from patient samples
+- Sample population demographics
+- Temporal sampling patterns
+- Complete fusion catalog coverage
+
+**Appropriate use:** Pipeline testing, development, and methodology validation.
+
+**Inappropriate use:** Drawing scientific conclusions about real fusion biology.
+
+*When real COSMIC data is available, re-run validation with user-provided COSMIC reference 
+for scientifically meaningful results.*
+"""
+
+
 def _section_5_cosmic(diag: Optional[Dict[str, Any]]) -> str:
     """Build Section 5: COSMIC Cross-Validation."""
     cosmic = (diag or {}).get("cosmic") or {}
@@ -301,18 +390,217 @@ def _section_5_cosmic(diag: Optional[Dict[str, Any]]) -> str:
     overlap = cosmic.get("overlap_count", "N/A")
     only_ours = cosmic.get("only_in_ours_count", "N/A")
     only_cosmic = cosmic.get("only_in_cosmic_count", "N/A")
+    
+    # Statistical metrics
+    spearman_rho = cosmic.get("spearman_rho")
+    spearman_p = cosmic.get("spearman_p_value")
+    rho_ci_lower = cosmic.get("rho_ci_lower")
+    rho_ci_upper = cosmic.get("rho_ci_upper")
+    bootstrap_iterations = cosmic.get("bootstrap_iterations")
+    top_overlap = cosmic.get("top_fusion_overlap")
+    enrichment_ratio = cosmic.get("top_fusion_enrichment_ratio")
+    enrichment_p = cosmic.get("enrichment_p_value")
+    expected_overlap = cosmic.get("expected_overlap_random")
+    negative_control_rho = cosmic.get("negative_control_rho")
+    negative_control_p = cosmic.get("negative_control_p_value")
+    validation_score = cosmic.get("cosmic_validation_score")
+    validation_classification = cosmic.get("cosmic_validation_classification", "N/A")
+    reference_source = cosmic.get("cosmic_reference_source", "N/A")
+    reference_version = cosmic.get("cosmic_reference_version", "N/A")
+    reference_hash = cosmic.get("cosmic_reference_file_hash", "N/A")
+    reference_timestamp = cosmic.get("cosmic_reference_load_timestamp", "N/A")
+    
+    # Score component breakdown
+    score_breakdown = cosmic.get("score_component_breakdown", {})
+    reproducibility_lock = cosmic.get("reproducibility_lock", {})
+    
+    def fmt_stat(v):
+        if v is None:
+            return "N/A"
+        try:
+            if isinstance(v, float):
+                return f"{v:.4f}"
+            return str(v)
+        except (TypeError, ValueError):
+            return str(v)
+    
+    def fmt_p_value(v):
+        if v is None:
+            return "N/A"
+        try:
+            if isinstance(v, float):
+                return f"{v:.6f}"
+            return str(v)
+        except (TypeError, ValueError):
+            return str(v)
+    
+    # Scientific interpretation text
+    interpretation_parts = []
+    
+    if spearman_rho is not None and isinstance(spearman_rho, (int, float)):
+        rho_val = float(spearman_rho)
+        abs_rho = abs(rho_val)
+        if abs_rho < 0.3:
+            strength = "weak"
+        elif abs_rho < 0.7:
+            strength = "moderate"
+        else:
+            strength = "strong"
+        
+        interpretation_parts.append(
+            f"A Spearman correlation of {rho_val:.4f} indicates "
+            f"{strength} rank-order agreement with COSMIC recurrence patterns."
+        )
+    
+    if enrichment_p is not None and isinstance(enrichment_p, (int, float)):
+        enrich_p_val = float(enrichment_p)
+        if enrich_p_val < 0.05:
+            interpretation_parts.append(
+                f"Hypergeometric enrichment test (p={enrich_p_val:.6f}) demonstrates "
+                f"statistically significant overlap of top-ranked fusions with COSMIC, "
+                f"suggesting biological relevance beyond chance expectation."
+            )
+    
+    if negative_control_rho is not None and spearman_rho is not None:
+        real_abs = abs(float(spearman_rho))
+        shuffled_abs = abs(float(negative_control_rho))
+        if real_abs > shuffled_abs + 0.1:
+            interpretation_parts.append(
+                f"Negative control validation confirms that observed agreement "
+                f"(ρ={real_abs:.4f}) significantly exceeds random expectation "
+                f"(shuffled ρ={shuffled_abs:.4f}), supporting biological validity."
+            )
+    
+    interpretation = ""
+    if interpretation_parts:
+        interpretation = "\n\n### Biological Interpretation\n\n" + "\n\n".join(interpretation_parts)
+    
+    # Build comprehensive metrics table with bootstrap CI
+    ci_str = "N/A"
+    if rho_ci_lower is not None and rho_ci_upper is not None:
+        ci_str = f"[{rho_ci_lower:.4f}, {rho_ci_upper:.4f}]"
+    
+    table_rows = [
+        f"| **Spearman rho** | {fmt_stat(spearman_rho)} |",
+        f"| **Spearman 95% CI** | {ci_str} |",
+        f"| **Spearman p-value** | {fmt_p_value(spearman_p)} |",
+        f"| **Enrichment p-value** | {fmt_p_value(enrichment_p)} |",
+        f"| **Expected Random Overlap** | {fmt_stat(expected_overlap)} |",
+        f"| **Negative Control rho** | {fmt_stat(negative_control_rho)} |",
+        f"| **COSMIC Validation Score** | {fmt_stat(validation_score)} |",
+    ]
+    
+    table_body = "\n".join(table_rows)
+    
+    # Add classification section
+    classification_section = ""
+    if validation_classification != "N/A":
+        classification_section = f"\n\n### COSMIC Validation Classification\n\n**{validation_classification}**\n"
 
-    return f"""## 5. COSMIC Cross-Validation Summary
+    # Provenance section
+    provenance_section = ""
+    if reference_source != "N/A" or reference_version != "N/A":
+        provenance_section = "\n\n### COSMIC Reference Provenance\n\n"
+        provenance_rows = []
+        if reference_source != "N/A":
+            provenance_rows.append(f"| **Source** | {reference_source} |")
+        if reference_version != "N/A":
+            provenance_rows.append(f"| **Version** | {reference_version} |")
+        if reference_hash != "N/A" and reference_hash:
+            hash_short = str(reference_hash)[:16] + "..." if len(str(reference_hash)) > 16 else str(reference_hash)
+            provenance_rows.append(f"| **File Hash** | `{hash_short}` |")
+        if reference_timestamp != "N/A":
+            provenance_rows.append(f"| **Load Timestamp** | {reference_timestamp} |")
+        if provenance_rows:
+            provenance_section += "| Field | Value |\n|-------|-------|\n" + "\n".join(provenance_rows)
+    
+    # Score component breakdown section
+    breakdown_section = ""
+    if score_breakdown:
+        corr_comp = score_breakdown.get("correlation_component", "N/A")
+        enrich_comp = score_breakdown.get("enrichment_component", "N/A")
+        neg_ctrl_comp = score_breakdown.get("negative_control_component", "N/A")
+        overlap_comp = score_breakdown.get("overlap_component", "N/A")
+        
+        def fmt_comp(v):
+            if v is None or v == "N/A":
+                return "N/A"
+            try:
+                return f"{float(v):.4f}"
+            except (TypeError, ValueError):
+                return str(v)
+        
+        breakdown_section = f"""
 
-| Metric | Count |
+### Score Component Breakdown
+
+| Component | Score |
+|-----------|-------|
+| **Correlation (rho + significance)** | {fmt_comp(corr_comp)} |
+| **Enrichment** | {fmt_comp(enrich_comp)} |
+| **Negative Control** | {fmt_comp(neg_ctrl_comp)} |
+| **Overlap** | {fmt_comp(overlap_comp)} |
+
+*Components sum to produce the final COSMIC Validation Score.*
+"""
+    
+    # Method justification section
+    method_justification = _build_method_justification_section()
+    
+    # Biological bias disclosure section
+    bias_disclosure = _build_biological_bias_disclosure()
+    
+    # Mock vs Real COSMIC compatibility statement
+    compatibility_statement = ""
+    if reference_source in ("mock", "mock_fallback", "mock_v1"):
+        compatibility_statement = _build_mock_cosmic_compatibility_statement()
+    
+    # Reproducibility lock section
+    reproducibility_section = ""
+    if reproducibility_lock:
+        repro_rows = []
+        if reproducibility_lock.get("python_version"):
+            repro_rows.append(f"| **Python Version** | {reproducibility_lock.get('python_version')} |")
+        if reproducibility_lock.get("numpy_version"):
+            repro_rows.append(f"| **NumPy Version** | {reproducibility_lock.get('numpy_version')} |")
+        if reproducibility_lock.get("scipy_version"):
+            repro_rows.append(f"| **SciPy Version** | {reproducibility_lock.get('scipy_version')} |")
+        if reproducibility_lock.get("pandas_version"):
+            repro_rows.append(f"| **Pandas Version** | {reproducibility_lock.get('pandas_version')} |")
+        if reproducibility_lock.get("cosmic_validation_code_version"):
+            repro_rows.append(f"| **Validation Code Version** | {reproducibility_lock.get('cosmic_validation_code_version')} |")
+        if reproducibility_lock.get("random_seed_mock_generation") is not None:
+            repro_rows.append(f"| **Mock Generation Seed** | {reproducibility_lock.get('random_seed_mock_generation')} |")
+        
+        if repro_rows:
+            reproducibility_section = "\n\n### Reproducibility Lock\n\n| Field | Value |\n|-------|-------|\n" + "\n".join(repro_rows)
+    
+    return f"""## 5. COSMIC Cross-Validation
+
+### Statistical Metrics
+
+| Metric | Value |
 |--------|-------|
+{table_body}
+{classification_section}
+{breakdown_section}
+### Summary Statistics
+
+| Statistic | Value |
+|-----------|-------|
 | **Total fusion pairs (ours)** | {ours} |
 | **Total fusion pairs (COSMIC reference)** | {cosmic_count} |
 | **Overlapping pairs** | {overlap} |
 | **Only in our dataset** | {only_ours} |
 | **Only in COSMIC** | {only_cosmic} |
+{interpretation}
+{method_justification}
+{bias_disclosure}
+{compatibility_statement}
+{provenance_section}
+{reproducibility_section}
 
-*Descriptive only. No statistical tests or validation conclusions.*
+*Statistical metrics and biological interpretation provided for COSMIC cross-validation assessment.*
 """
 
 

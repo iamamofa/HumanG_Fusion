@@ -34,7 +34,10 @@ PyYAML>=5.4.0
 # Log-normality: Anderson-Darling statistic (without: AD not computed)
 # Benford: chi-squared p-value (without: p-value not computed)
 # Visualization: bias-corrected skewness (without: NumPy fallback used)
-# Used by: distributions/log_normality, distributions/visualize, benford/diagnostics
+# COSMIC: Spearman correlation, bootstrap confidence intervals (1000 iterations), hypergeometric test, negative control
+# Distribution: Bias-corrected skewness, Anderson-Darling statistic
+# Benford: Chi-squared p-value
+# Used by: distributions/log_normality, distributions/visualize, benford/diagnostics, cosmic/diagnostics, cosmic/statistical_controls
 scipy>=1.7.0
 
 # =============================================================================

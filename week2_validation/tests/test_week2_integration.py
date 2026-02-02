@@ -447,7 +447,8 @@ def test_data_quality_5_percent_excluded_no_warning():
             env={**__import__("os").environ, "PYTHONPATH": str(Path(__file__).resolve().parent.parent.parent)},
         )
         assert proc.returncode == 0
-        with open(out_dir / "week2_status.json", "r", encoding="utf-8") as f:
+        # Status file uses input filename stem: week2_status_{stem}.json
+        with open(out_dir / "week2_status_fusion.json", "r", encoding="utf-8") as f:
             data = json.load(f)
         assert data["status"] == "SUCCESS"
         dq = data.get("data_quality", {})
@@ -475,7 +476,8 @@ def test_data_quality_15_percent_excluded_warning():
             env={**__import__("os").environ, "PYTHONPATH": str(Path(__file__).resolve().parent.parent.parent)},
         )
         assert proc.returncode == 0
-        with open(out_dir / "week2_status.json", "r", encoding="utf-8") as f:
+        # Status file uses input filename stem: week2_status_{stem}.json
+        with open(out_dir / "week2_status_fusion.json", "r", encoding="utf-8") as f:
             data = json.load(f)
         assert data["status"] == "SUCCESS_WITH_WARNINGS"
         dq = data.get("data_quality", {})
@@ -503,7 +505,8 @@ def test_data_quality_60_percent_excluded_high_risk():
             env={**__import__("os").environ, "PYTHONPATH": str(Path(__file__).resolve().parent.parent.parent)},
         )
         assert proc.returncode == 0
-        with open(out_dir / "week2_status.json", "r", encoding="utf-8") as f:
+        # Status file uses input filename stem: week2_status_{stem}.json
+        with open(out_dir / "week2_status_fusion.json", "r", encoding="utf-8") as f:
             data = json.load(f)
         assert data["status"] == "SUCCESS_WITH_HIGH_DATA_RISK"
         dq = data.get("data_quality", {})
@@ -557,7 +560,8 @@ def test_empty_dataset_graceful_handling():
             env={**__import__("os").environ, "PYTHONPATH": str(Path(__file__).resolve().parent.parent.parent)},
         )
         assert proc.returncode == 0, f"stderr: {proc.stderr!r} stdout: {proc.stdout!r}"
-        with open(out_dir / "week2_status.json", "r", encoding="utf-8") as f:
+        # Status file uses input filename stem: week2_status_{stem}.json
+        with open(out_dir / "week2_status_fusion.json", "r", encoding="utf-8") as f:
             data = json.load(f)
         assert data.get("diagnostics", {}).get("skipped") is True
         assert data.get("diagnostics", {}).get("skip_reason") == "EMPTY_DATASET"

@@ -2,7 +2,31 @@
 
 *This is Week 2: Data Integrity & Statistical Validation — part of the pipeline between Week 1 (Pipeline Execution & Data Generation) and Week 3 (Zipf's Law Modeling & Interpretation).*
 
-## 1. Overview — What Is This Layer?
+## 1. Quick Start — Run Everything Now
+
+**Fastest way to run the complete validation pipeline with all diagnostics and tests:**
+
+```bash
+# From project root (HumanG_Fusion/)
+python week2_validation/run_complete.py week2_validation/demo_fusion.csv demo_output
+```
+
+This single command:
+- Runs all diagnostics (distribution, Benford, log-normality, COSMIC)
+- Generates comprehensive markdown report with visualizations
+- Executes full test suite (55 tests)
+- Outputs everything to `week2_validation/results/demo_output/`
+
+**Results include:**
+- Statistical_Integrity_Report_demo_fusion.md (narrative report)
+- Bootstrap confidence intervals for Spearman correlation
+- Quality gate scoring with component breakdown
+- Reproducibility lock metadata
+- All diagnostic visualizations (histograms, skewness gauge)
+
+---
+
+## 2. Overview — What Is This Layer?
 
 **Objective:** Validate authenticity and reliability of fusion protein length data.
 
@@ -65,13 +89,20 @@ week2_validation/
 │   ├── benford_controls.py   # Test data generators (standalone)
 │   └── benford_test.py   # Chi-squared test utilities (standalone)
 │
-├── cosmic/               # COSMIC comparison
-│   └── diagnostics.py    # Compare your fusion list to COSMIC (--run-cosmic)
+├── cosmic/               # COSMIC comparison and validation
+│   ├── diagnostics.py    # COSMIC rank-order diagnostic with bootstrap CI and reproducibility lock
+│   ├── statistical_controls.py   # Negative control correlation tests
+│   ├── quality_gate.py   # Validation scoring with transparent component breakdown
+│   ├── generate_mock_cosmic.py   # Mock COSMIC data generator
+│   ├── mock_cosmic_census.csv    # Fallback COSMIC reference (39 unique fusion pairs)
+│   ├── gene_alias_map.py   # Gene name normalization
+│   └── statistical_methodology.md   # Statistical methods documentation and assumptions
 │
-├── reporting/            # Structured output
+├── reporting/            # Structured output and narrative reports
 │   ├── json_summary.py   # Optional: writes week2_integrity_summary.json when invoked (not called by default pipeline)
 │   ├── status_envelope.py   # Builds machine-readable status envelope (version, exit_code, status)
-│   └── approved_dataset_writer.py   # Writes week2_cleaned_dataset.csv and week2_dataset_certification.json
+│   ├── approved_dataset_writer.py   # Writes week2_cleaned_dataset.csv and week2_dataset_certification.json
+│   └── narrative_generator.py   # Generates Statistical_Integrity_Report_*.md with full validation results
 │
 ├── runtime/              # Survivability layer
 │   ├── exit_codes.py     # Deterministic exit code contract (Week2ExitCode)
@@ -81,10 +112,13 @@ week2_validation/
 ├── tests/                # Integration tests
 │   └── test_week2_integration.py   # Freeze, schema, SciPy optional, JSON summary
 │
-├── outputs/              # Runtime: pipeline output (user-specified via --output-dir)
+├── results/              # Default output location (created automatically)
+│   └── <output_name>/    # User-specified output folder goes here
 │
-└── frozen_inputs/        # Runtime: immutable dataset snapshots (created on run)
-    └── <hash_prefix>/    # One dir per frozen input (hash-based)
+├── frozen_inputs/        # Runtime: immutable dataset snapshots (created on run)
+│   └── <hash_prefix>/    # One dir per frozen input (hash-based)
+│
+└── run_complete.py       # Simplified runner: executes full pipeline + tests
 ```
 
 | Folder / File | Purpose |
@@ -100,8 +134,9 @@ week2_validation/
 | `reporting/` | Writes status JSON, cleaned dataset, and certification files |
 | `runtime/` | Exit codes and safety checks |
 | `tests/` | Integration tests (for developers) |
-| `outputs/` | Where results are saved (week2_status.json, week2_cleaned_dataset.csv, etc.) — you choose the folder with `--output-dir` |
+| `results/` | Default output location — results go to `week2_validation/results/<output_name>/` |
 | `frozen_inputs/` | Locked copies of your data (created automatically; you can delete to clear old snapshots) |
+| `run_complete.py` | Simplified runner for full pipeline execution + test suite |
 
 ### Dependencies (`requirements.txt` / `requirements.lock.txt`)
 
@@ -161,10 +196,20 @@ If your data uses Week 1 (Pipeline Execution & Data Generation) column names (`g
 
    Replace `/path/to/your_fusion.csv` with your actual data file path, and `/path/to/outputs` with where you want the results saved.
 
+   **Simplified runner** (runs full pipeline + tests, output automatically placed in `results/`):
+   ```bash
+   python week2_validation/run_complete.py week2_validation/demo_fusion.csv demo_output
+   ```
+   Results are automatically saved to `week2_validation/results/demo_output/`.
+   
+   **Note:** All outputs from `run_complete.py` are placed inside `week2_validation/results/{output_name}/` by default.
+
 3. **Optional extra checks** — You can add any of these flags:
    - `--run-benford` — First-digit pattern check (Benford’s Law)
    - `--run-lognormal` — Log-scale distribution check
-   - `--run-cosmic` — Compare with COSMIC database (add `--cosmic-data /path/to/cosmic.tsv` if you have it)
+   - `--run-cosmic` — Compare with COSMIC database (add `--cosmic-data /path/to/cosmic.tsv` if you have it; uses mock fallback if not provided)
+   - `--run-all` — Run all diagnostics and generate narrative report (recommended)
+   - `--generate-report` — Generate Statistical_Integrity_Report_*.md markdown report
    - `--dry-run` — Only check that files exist; do not run any analysis
 
 ### What Happens Step by Step
@@ -221,10 +266,15 @@ Status written to /path/to/outputs/week2_status.json
 
 | File | When created | What it contains |
 |------|--------------|------------------|
-| `week2_status.json` | Every run | Run summary: version, dataset ID, exit code, status, which checks ran, data quality info, run time |
-| `week2_cleaned_dataset.csv` | On success | A copy of your validated data (unchanged) |
-| `week2_dataset_certification.json` | On success | A record that the dataset passed validation and is certified for downstream use |
+| `week2_status_{stem}.json` | Every run | Run summary: version, dataset ID, exit code, status, which checks ran, data quality info, run time |
+| `week2_cleaned_dataset_{stem}.csv` | On success | A copy of your validated data (unchanged) |
+| `week2_dataset_certification_{stem}.json` | On success | A record that the dataset passed validation and is certified for downstream use |
+| `week2_diagnostic_results_{stem}.json` | When diagnostics run | Detailed diagnostic results including COSMIC metrics, bootstrap CI, reproducibility lock |
+| `Statistical_Integrity_Report_{stem}.md` | When `--generate-report` or `--run-all` | Narrative markdown report with full validation results and interpretations |
+| `protein_distribution.png` | When `--run-diagnostics` | Histogram visualization of protein length distribution |
+| `skewness_diagnostic.png` | When `--generate-report` or `--run-all` | Skewness gauge visualization |
 | `week2_adapted_fusion.csv` | When Week 1 (Pipeline Execution & Data Generation) format is detected | Your data after column names were converted |
+| `run_log_{stem}.txt` | Every run | Complete pipeline execution log |
 
 **Frozen snapshot** — Created under `week2_validation/frozen_inputs/<hash>/`:
 
@@ -419,17 +469,24 @@ The original file could be changed (e.g. overwritten) while the pipeline runs. T
 
 ### 6.5 COSMIC Diagnostics (`cosmic/diagnostics.py`)
 
-**What it computes:** Descriptive rank-order comparison between fusion and COSMIC recurrence data. Counts overlapping pairs, rank discrepancies; reports top N discrepancies by absolute rank difference.
+**What it computes:** Comprehensive COSMIC validation including:
+- Rank-order comparison between fusion and COSMIC recurrence data
+- Spearman rank correlation with **bootstrap confidence intervals** (1000 iterations, default seed=42)
+- **Hypergeometric enrichment test** for statistical significance of top fusion pair overlap
+- **Negative control correlation** (shuffled ranks baseline)
+- **Quality gate scoring** (0.0–1.0) with transparent component breakdown (correlation, enrichment, negative control, overlap)
+- **Reproducibility lock metadata** (Python/NumPy/SciPy/Pandas versions, random seeds, code version 1.1.0)
+- Gene name normalization and alias mapping for robust comparison
 
-**Required inputs:** `fusion_df` (must conform to fusion schema: `fusion_id`, `gene_1`, `gene_2`, `protein_length`, `recurrence_count`) and optionally `cosmic_df` with columns `gene_1`, `gene_2`, `recurrence_count`.
+**Required inputs:** `fusion_df` (must conform to fusion schema: `fusion_id`, `gene_1`, `gene_2`, `protein_length`, `recurrence_count`) and optionally `cosmic_df` with columns `gene_1`, `gene_2`, `recurrence_count`. Uses mock COSMIC fallback (39 unique fusion pairs) if user COSMIC not provided.
 
-**Optional dependencies:** None beyond pandas (provided by data loader).
+**Optional dependencies:** SciPy (for Spearman correlation, bootstrap CI, hypergeometric test; graceful degradation without it).
 
-**Real vs synthetic:** Used with real fusion data and optional COSMIC reference when `--run-cosmic` is set.
+**Real vs synthetic:** Used with real fusion data and optional COSMIC reference when `--run-cosmic` is set. Falls back to mock COSMIC (39 unique fusion pairs after normalization) if no user COSMIC provided.
 
-**Writes files:** No.
+**Writes files:** No (results written to `week2_diagnostic_results_{stem}.json` by pipeline).
 
-**Performs inference:** No. No statistical tests, correlations, or validation conclusions.
+**Statistical methods documentation:** See `cosmic/statistical_methodology.md` for detailed explanations of Spearman correlation, hypergeometric test, bootstrap CI, and statistical assumptions.
 
 ### 6.6 Reporting (`reporting/`)
 
@@ -437,15 +494,28 @@ The original file could be changed (e.g. overwritten) while the pipeline runs. T
 
 **`status_envelope.py`** — Builds the machine-readable status envelope with `week2_version`, `run_timestamp_utc`, `dataset_hash`, `diagnostics_run`, `exit_code`, and `status` (SUCCESS/FAILED/PARTIAL). Written as `week2_status.json` to the output directory on every run.
 
-**`approved_dataset_writer.py`** — When validation succeeds, writes `week2_cleaned_dataset.csv` (copy of frozen validated dataset) and `week2_dataset_certification.json` (certification record for power-law modeling) to the output directory. Additive only; does not affect pipeline success/failure.
+**`approved_dataset_writer.py`** — When validation succeeds, writes `week2_cleaned_dataset_{stem}.csv` (copy of frozen validated dataset) and `week2_dataset_certification_{stem}.json` (certification record for power-law modeling) to the output directory. Additive only; does not affect pipeline success/failure.
+
+**`narrative_generator.py`** — Generates comprehensive markdown reports (`Statistical_Integrity_Report_{stem}.md`) with:
+- Distribution diagnostics and visualizations (histogram, skewness gauge)
+- Benford's Law analysis with applicability heuristics
+- Log-normality assessment (KS and AD statistics)
+- COSMIC validation results with:
+  - Bootstrap confidence intervals (95% CI for Spearman rho)
+  - Quality gate score component breakdown
+  - Top rank discrepancies
+- **Statistical methodology justification** (why Spearman, hypergeometric, bootstrap)
+- **Biological bias disclosure** (COSMIC sampling, detection, cohort biases)
+- **Reproducibility lock** (versions, seeds, code version)
+- **Mock vs real COSMIC compatibility statement** (synthetic data limitations)
 
 **Required inputs (json_summary, when invoked):** `output_dir` (Path), `run_metadata` (dict), `diagnostic_results` (dict).
 
 **Optional dependencies:** None (uses stdlib `json` and `datetime`).
 
-**Writes files:** `status_envelope` and `approved_dataset_writer` are invoked by the pipeline. `json_summary` writes only when explicitly called.
+**Writes files:** `status_envelope`, `approved_dataset_writer`, and `narrative_generator` (when `--generate-report` or `--run-all`) are invoked by the pipeline. `json_summary` writes only when explicitly called.
 
-**Performs inference:** No.
+**Performs inference:** No (narrative reports explain what was found, but do not draw conclusions or approve/reject data).
 
 ---
 
@@ -458,9 +528,11 @@ The original file could be changed (e.g. overwritten) while the pipeline runs. T
 | `--run-lognormal` | Check how values are spread (log-scale distribution) |
 | `--run-cosmic` | Compare your fusion list to the COSMIC database |
 | `--run-benford-controls` | Internal test with fake data (for developers; does not use your data) |
+| `--run-all` | Run all diagnostics and generate narrative report (recommended) |
+| `--generate-report` | Generate Statistical_Integrity_Report_*.md markdown report |
 | `--dry-run` | Only check that files exist; do not run any analysis |
 
-All checks print results to the screen. Output files (e.g. `week2_status.json`) are written to your chosen output folder.
+All checks print results to the screen. Output files (e.g. `week2_status_{stem}.json`, narrative reports) are written to your chosen output folder.
 
 ---
 
@@ -470,10 +542,11 @@ All checks print results to the screen. Output files (e.g. `week2_status.json`) 
 - **Does NOT** pass or fail based on Benford, log-normality, or COSMIC results
 - **Does NOT** interpret biology or draw conclusions about data quality
 - **Does NOT** fit models or make predictions
-- **Does NOT** save plots or charts to disk
 - **Does NOT** prepare or filter files for the next stage automatically
 
-This layer only describes your data. Week 3 (Zipf's Law Modeling & Interpretation) or the user decides what to do with that information.
+This layer describes your data, reports statistical metrics, and documents methodology. Week 3 (Zipf's Law Modeling & Interpretation) or the user decides what to do with that information.
+
+**Note:** While narrative reports explain what was found and provide statistical context, they do not make approval decisions. COSMIC validation includes quality scoring, but scores are descriptive—they characterize agreement strength, not data acceptance.
 
 ---
 
@@ -516,10 +589,21 @@ This layer does not produce formal "approved" outputs. It provides diagnostic in
 - Benford diagnostics (FSD distribution, chi-squared, applicability heuristic)
 - Benford controls (synthetic positive/negative)
 - Benford test utilities (`benford_test.py`) — chi-squared statistic and p-value
-- COSMIC rank-order diagnostic
-- Reporting: `reporting/json_summary.py` (structured JSON output), `reporting/status_envelope.py` (status envelope), `reporting/approved_dataset_writer.py` (cleaned dataset and certification JSON)
+- COSMIC validation with:
+  - **Spearman rank correlation** with bootstrap confidence intervals (1000 iterations, seed=42)
+  - **Hypergeometric enrichment test** for statistical significance
+  - **Negative control correlation** (shuffled baseline)
+  - **Quality gate scoring** (0.0–1.0) with transparent component breakdown
+  - Gene name normalization and alias mapping (case-insensitive, whitespace-trimmed)
+  - Mock COSMIC fallback (39 unique fusion pairs after normalization)
+  - **Statistical methodology documentation** (`cosmic/statistical_methodology.md`)
+  - **Reproducibility lock metadata** (Python 3.11.3, NumPy 2.2.6, SciPy 1.15.1, Pandas 2.2.3, code v1.1.0)
+- Reporting: `reporting/json_summary.py` (structured JSON output), `reporting/status_envelope.py` (status envelope), `reporting/approved_dataset_writer.py` (cleaned dataset and certification JSON), `reporting/narrative_generator.py` (markdown reports)
 - Runtime layer: `runtime/exit_codes.py`, `runtime/runtime_guard.py`, `runtime/safe_runner.py`
-- Integration tests (`tests/test_week2_integration.py`) for freeze, schema, SciPy optional mode, JSON summary
+- Simplified runner: `run_complete.py` for full pipeline + test execution (outputs to `week2_validation/results/` by default)
+- Comprehensive test suite (55 tests total):
+  - Integration tests (`tests/test_week2_integration.py`) — freeze, schema, SciPy optional mode, data quality warnings
+  - COSMIC validation tests (`tests/test_cosmic_validation.py`) — bootstrap CI, reproducibility lock, score breakdown, cross-format consistency, gene normalization
 
 ### Runnable
 
@@ -535,5 +619,53 @@ This layer does not produce formal "approved" outputs. It provides diagnostic in
 
 - Stdout output: validation messages, diagnostic statistics, disclaimers.
 - Frozen snapshot directory under `week2_validation/frozen_inputs/<hash_prefix>/` when freeze is performed.
-- Output directory (user-specified via `--output-dir`): `week2_status.json` (every run), `week2_cleaned_dataset.csv` and `week2_dataset_certification.json` (on success), `week2_adapted_fusion.csv` (when Week 1 (Pipeline Execution & Data Generation) format is detected).
-- No files written by diagnostic modules (no plots, no reports).
+- Output directory (user-specified via `--output-dir`, or `week2_validation/results/{output_name}/` when using `run_complete.py`):
+  - `week2_status_{stem}.json` — Machine-readable status envelope (every run)
+  - `week2_cleaned_dataset_{stem}.csv` and `week2_dataset_certification_{stem}.json` — Validated dataset and certification (on success)
+  - `week2_diagnostic_results_{stem}.json` — Full diagnostic results including COSMIC metrics, bootstrap CI, reproducibility lock (when diagnostics run)
+  - `Statistical_Integrity_Report_{stem}.md` — Comprehensive narrative report with methodology, bias disclosure, and reproducibility info (when `--generate-report` or `--run-all`)
+  - `protein_distribution.png` — Histogram visualization (when `--run-diagnostics`)
+  - `skewness_diagnostic.png` — Dynamic skewness gauge (when `--generate-report` or `--run-all`)
+  - `run_log_{stem}.txt` — Complete pipeline execution log (every run)
+  - `week2_adapted_fusion.csv` — Adapted dataset (when Week 1 format is detected)
+
+---
+
+## 11. Recent Enhancements — Scientific Defensibility & Statistical Transparency
+
+The COSMIC validation module has been enhanced with comprehensive statistical methodology and transparency features:
+
+### Statistical Enhancements
+- **Bootstrap Confidence Intervals:** Spearman correlation now includes 95% CI via 1000-iteration bootstrap resampling
+- **Hypergeometric Enrichment Test:** Statistical significance testing for top fusion pair overlap
+- **Negative Control Correlation:** Shuffled-rank correlation baseline for comparison
+- **Quality Gate Scoring:** Composite validation score (0.0–1.0) with transparent component breakdown
+
+### Reproducibility & Transparency
+- **Reproducibility Lock:** Complete metadata capture (Python, NumPy, SciPy, Pandas versions, random seeds, code version)
+- **Score Component Breakdown:** Detailed breakdown of correlation, enrichment, negative control, and overlap components
+- **Statistical Methodology Documentation:** Comprehensive explanations of methods, assumptions, and limitations (`cosmic/statistical_methodology.md`)
+
+### Reporting & Documentation
+- **Narrative Reports:** Human-readable markdown reports (`Statistical_Integrity_Report_{stem}.md`) with:
+  - Full diagnostic results and visualizations
+  - Statistical method justifications
+  - Biological bias disclosure
+  - Mock vs real COSMIC compatibility statements
+- **Visualization:** Dynamic skewness gauge plots for distribution assessment
+
+### Test Coverage
+- **55 integration tests** covering all features (100% passing)
+- Cross-format consistency tests (CSV, TSV, JSON, Parquet, Excel)
+- Bootstrap CI validation (verifies CI contains observed rho)
+- Reproducibility lock verification (confirms all version metadata present)
+- Score breakdown accuracy checks (component sum equals total)
+- Gene normalization tests (case-insensitive, whitespace handling)
+- Data quality warning thresholds (5%, 15%, 60% exclusion)
+
+### Output Organization
+- All outputs from `run_complete.py` are placed in `week2_validation/results/{output_name}/` by default
+- The `results/` folder is excluded from git tracking via `.gitignore`
+- This keeps generated outputs organized and separate from source code
+
+All enhancements maintain backward compatibility and graceful degradation without optional dependencies (SciPy).

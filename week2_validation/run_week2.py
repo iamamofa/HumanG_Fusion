@@ -519,6 +519,7 @@ def validate_arguments(args: argparse.Namespace) -> PipelineConfig:
 
     # STEP 4: Create and return the configuration object
     # --run-all enables all diagnostic flags (distribution, Benford, log-normality, Benford controls, COSMIC)
+    # AND generates the narrative report
     run_all = getattr(args, "run_all", False)
     dataset_stem = fusion_path.stem  # e.g. "demo_fusion" from "demo_fusion.parquet"
     return PipelineConfig(
@@ -532,7 +533,7 @@ def validate_arguments(args: argparse.Namespace) -> PipelineConfig:
         run_lognormal=args.run_lognormal or run_all,
         run_cosmic=args.run_cosmic or run_all,
         run_benford_controls=args.run_benford_controls or run_all,
-        generate_report=getattr(args, "generate_report", False),
+        generate_report=getattr(args, "generate_report", False) or run_all,
     )
 
 
@@ -1058,7 +1059,7 @@ def execute_cosmic_diagnostics(
     
     Returns:
         Tuple of (result_code, cosmic_loaded). result_code: 0 for success, non-zero for failure.
-        cosmic_loaded: True if COSMIC reference was requested and loaded, False otherwise.
+        cosmic_loaded: True if COSMIC reference was loaded (user-provided or mock), False otherwise.
     """
     print("Starting COSMIC rank-order diagnostic analysis...")
     print()
@@ -1087,20 +1088,47 @@ def execute_cosmic_diagnostics(
         return (int(Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR), False)
     
     # -------------------------------------------------------------------------
-    # Load COSMIC data (only if available)
+    # Load COSMIC data with automatic fallback to mock COSMIC
     # -------------------------------------------------------------------------
     cosmic_df = None
-    cosmic_reference_loaded = True  # True when no path provided or load succeeded
+    cosmic_reference_loaded = False
+    cosmic_reference_source = None
+    
     if config.cosmic_data_path is not None:
+        # User provided COSMIC data - try to load it
         try:
             cosmic_df = load_reference_data(str(config.cosmic_data_path))
             cosmic_reference_loaded = cosmic_df is not None
+            if cosmic_reference_loaded:
+                cosmic_reference_source = "user_provided"
+                print(f"Loaded user-provided COSMIC data from: {config.cosmic_data_path.name}")
         except Exception as e:
-            print(f"Warning: Could not load COSMIC data: {e}")
-            print("Proceeding with diagnostic (COSMIC data unavailable).")
+            print(f"Warning: Could not load user-provided COSMIC data: {e}")
+            print("Attempting fallback to mock COSMIC dataset...")
             cosmic_reference_loaded = False
-    else:
-        print("Note: No COSMIC data path provided (--cosmic-data).")
+    
+    # Fallback to mock COSMIC if user COSMIC not available
+    if not cosmic_reference_loaded:
+        try:
+            from week2_validation.cosmic.generate_mock_cosmic import ensure_mock_cosmic_exists
+            
+            # Mock COSMIC should be in week2_validation/cosmic/ directory
+            cosmic_dir = Path(__file__).parent / "cosmic"
+            mock_cosmic_path = ensure_mock_cosmic_exists(cosmic_dir)
+            
+            cosmic_df = load_reference_data(str(mock_cosmic_path))
+            cosmic_reference_loaded = cosmic_df is not None
+            if cosmic_reference_loaded:
+                cosmic_reference_source = "mock_fallback"
+                print(f"Loaded mock COSMIC fallback dataset from: {mock_cosmic_path.name}")
+                print("Note: Using synthetic COSMIC data for pipeline operability.")
+        except Exception as e:
+            print(f"Warning: Could not load mock COSMIC fallback: {e}")
+            print("COSMIC diagnostic will report fusion data counts only.")
+            cosmic_reference_loaded = False
+    
+    if not cosmic_reference_loaded:
+        print("Note: No COSMIC reference data available (neither user-provided nor mock).")
         print("COSMIC diagnostic will report fusion data counts only.")
     
     # -------------------------------------------------------------------------
@@ -1108,20 +1136,57 @@ def execute_cosmic_diagnostics(
     # -------------------------------------------------------------------------
     try:
         print(f"Running COSMIC rank-order diagnostic...")
+        # Determine cosmic file path for provenance
+        cosmic_file_path = None
+        if config.cosmic_data_path:
+            cosmic_file_path = config.cosmic_data_path
+        elif cosmic_reference_source == "mock_fallback":
+            # Mock COSMIC path
+            cosmic_dir = Path(__file__).parent / "cosmic"
+            cosmic_file_path = cosmic_dir / "mock_cosmic_census.csv"
+        
         result = run_cosmic_recurrence_diagnostic(
             fusion_df=fusion_df,
             cosmic_df=cosmic_df,
             top_n=10,
+            cosmic_reference_source=cosmic_reference_source,
+            cosmic_file_path=cosmic_file_path,
+            mock_generation_seed=42,
+            bootstrap_iterations=1000,
+            bootstrap_seed=42,
         )
         
         # Report results (no interpretation, just facts)
         print()
         print("COSMIC Rank-Order Diagnostic Results:")
+        if cosmic_reference_source:
+            print(f"  COSMIC reference source: {cosmic_reference_source}")
         print(f"  Total fusion pairs (ours): {result['total_fusions_ours']}")
         print(f"  Total fusion pairs (COSMIC): {result['total_fusions_cosmic']}")
         print(f"  Overlapping pairs: {result['overlap_count']}")
         print(f"  Only in ours: {result['only_in_ours_count']}")
         print(f"  Only in COSMIC: {result['only_in_cosmic_count']}")
+        
+        # Report statistical metrics if available
+        if "spearman_rho" in result and result["spearman_rho"] is not None:
+            print()
+            print("  Statistical Metrics:")
+            print(f"    Spearman rank correlation (rho): {result['spearman_rho']:.4f}")
+            if result.get("spearman_p_value") is not None:
+                print(f"    Spearman p-value: {result['spearman_p_value']:.6f}")
+            if result.get("enrichment_p_value") is not None:
+                print(f"    Enrichment p-value: {result['enrichment_p_value']:.6f}")
+            if result.get("expected_overlap_random") is not None:
+                print(f"    Expected random overlap: {result['expected_overlap_random']:.2f}")
+            if result.get("negative_control_rho") is not None:
+                print(f"    Negative control rho: {result['negative_control_rho']:.4f}")
+            if result.get("cosmic_validation_score") is not None:
+                print(f"    COSMIC validation score: {result['cosmic_validation_score']:.4f}")
+                print(f"    Classification: {result.get('cosmic_validation_classification', 'N/A')}")
+        
+        if "top_fusion_overlap" in result:
+            print(f"    Top 10 fusion overlap: {result['top_fusion_overlap']}")
+            print(f"    Top fusion enrichment ratio: {result['top_fusion_enrichment_ratio']:.4f}")
         
         # Report message if present
         if "message" in result and result["message"]:
@@ -1141,13 +1206,59 @@ def execute_cosmic_diagnostics(
         print("COSMIC rank-order diagnostic analysis complete.")
         # Record COSMIC results for narrative report
         if run_metadata is not None:
-            run_metadata.setdefault("diagnostic_results", {})["cosmic"] = {
+            cosmic_metadata = {
                 "total_fusions_ours": result["total_fusions_ours"],
                 "total_fusions_cosmic": result["total_fusions_cosmic"],
                 "overlap_count": result["overlap_count"],
                 "only_in_ours_count": result["only_in_ours_count"],
                 "only_in_cosmic_count": result["only_in_cosmic_count"],
             }
+            
+            # Add statistical metrics if available
+            if "spearman_rho" in result:
+                cosmic_metadata["spearman_rho"] = result.get("spearman_rho")
+                cosmic_metadata["spearman_p_value"] = result.get("spearman_p_value")
+                cosmic_metadata["enrichment_p_value"] = result.get("enrichment_p_value")
+                cosmic_metadata["expected_overlap_random"] = result.get("expected_overlap_random")
+                cosmic_metadata["observed_overlap"] = result.get("observed_overlap")
+                cosmic_metadata["negative_control_rho"] = result.get("negative_control_rho")
+                cosmic_metadata["negative_control_p_value"] = result.get("negative_control_p_value")
+                cosmic_metadata["cosmic_validation_score"] = result.get("cosmic_validation_score")
+                cosmic_metadata["cosmic_validation_classification"] = result.get("cosmic_validation_classification")
+                
+                # Add bootstrap CI if available
+                if "rho_ci_lower" in result:
+                    cosmic_metadata["rho_ci_lower"] = result.get("rho_ci_lower")
+                    cosmic_metadata["rho_ci_upper"] = result.get("rho_ci_upper")
+                    cosmic_metadata["bootstrap_iterations"] = result.get("bootstrap_iterations")
+                
+                # Add score component breakdown if available
+                if "score_component_breakdown" in result:
+                    cosmic_metadata["score_component_breakdown"] = result.get("score_component_breakdown")
+                
+                # Add score_components (legacy) if available
+                if "score_components" in result:
+                    cosmic_metadata["score_components"] = result.get("score_components")
+                    
+            if "top_fusion_overlap" in result:
+                cosmic_metadata["top_fusion_overlap"] = result.get("top_fusion_overlap")
+                cosmic_metadata["top_fusion_enrichment_ratio"] = result.get("top_fusion_enrichment_ratio")
+            
+            # Add reproducibility lock if available
+            if "reproducibility_lock" in result:
+                cosmic_metadata["reproducibility_lock"] = result.get("reproducibility_lock")
+            
+            # Add provenance metadata
+            if "cosmic_reference_source" in result:
+                cosmic_metadata["cosmic_reference_source"] = result.get("cosmic_reference_source")
+            elif cosmic_reference_source:
+                cosmic_metadata["cosmic_reference_source"] = cosmic_reference_source
+            
+            cosmic_metadata["cosmic_reference_version"] = result.get("cosmic_reference_version")
+            cosmic_metadata["cosmic_reference_file_hash"] = result.get("cosmic_reference_file_hash")
+            cosmic_metadata["cosmic_reference_load_timestamp"] = result.get("cosmic_reference_load_timestamp")
+            
+            run_metadata.setdefault("diagnostic_results", {})["cosmic"] = cosmic_metadata
         print()
         print("NOTE: COSMIC diagnostics are DESCRIPTIVE ONLY.")
         print("No inference, no statistical tests, no validation conclusions are drawn.")

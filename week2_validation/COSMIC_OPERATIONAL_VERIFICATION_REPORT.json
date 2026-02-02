@@ -1,0 +1,161 @@
+{
+  "verification_timestamp": "2026-02-02T11:14:22.793490",
+  "final_verdict": "COSMIC NOT PRESENT",
+  "phases": {
+    "COSMIC File Presence": {
+      "status": "INSUFFICIENT_EVIDENCE",
+      "evidence": {
+        "cosmic_file_present": false,
+        "message": "No COSMIC file found in expected locations"
+      }
+    },
+    "COSMIC Runtime Load": {
+      "status": "FAILED",
+      "evidence": {
+        "status_json": {
+          "week2_version": "0.1.0",
+          "run_timestamp_utc": "2026-02-02T11:14:22Z",
+          "dataset_hash": "02d2de4f190e",
+          "diagnostics_run": [
+            "cosmic"
+          ],
+          "exit_code": 0,
+          "status": "SUCCESS",
+          "notes": [],
+          "cosmic_reference_requested": false,
+          "scipy_available": true,
+          "psutil_available": true,
+          "data_quality": {
+            "total_rows_original": 84,
+            "rows_used_for_analysis": 84,
+            "rows_excluded": 0,
+            "excluded_fraction": 0.0,
+            "warning_flag": false,
+            "high_risk_flag": false
+          },
+          "runtime_seconds": 0.09
+        },
+        "cosmic_reference_loaded": false,
+        "cosmic_df_rows": 0,
+        "exit_code": 0,
+        "stdout_snippet": "============================================================\nData Integrity & Statistical Validation Pipeline\n============================================================\n\nLoading configuration...\n  Configuration loaded from: thresholds.yaml\n  dataset_frozen_required: True\n  allow_real_data_analysis: False\n\nEnsuring dataset is frozen for Data Integrity & Statistical Validation diagnostics...\nDataset already frozen \u2014 using existing frozen snapshot\n  Frozen data location: C:\\Users\\enchi\\Documents\\HumanG_Fusion\\week2_validation\\frozen_inputs\\02d2de4f190e\\demo_fusion.csv\n\nValidating inputs...\nValidating fusion data: demo_fusion.csv\n  Loaded 84 records with 5 fields\n  Schema validation: PASSED\nOutput directory validated: C:\\Users\\enchi\\AppData\\Local\\Temp\\cosmic_audit_xs4tsuu7\\phase2_output\n\n============================================================\nRUNNING DIAGNOSTICS\n============================================================\nDataset frozen (automatic): YES\nDistribution diagnostics requested: NO\nBenford diagnostics requested: NO\nLog-normality diagnostics requested: NO\nCOSMIC diagnostics requested: YES\n\nStarting COSMIC rank-order diagnostic analysis...\n\nNote: No COSMIC data path provided (--cosmic-data).\nCOSMIC diagnostic will report fusion data counts only.\nRunning COSMIC rank-order diagnostic...\n\nCOSMIC Rank-Order Diagnostic Results:\n  Total fusion pairs (ours): 84\n  Total fusion pairs (COSMIC): 0\n  Overlapping pairs: 0\n  Only in ours: 84\n  Only in COSMIC: 0\n\n  Note: COSMIC DataFrame is None.\n\nCOSMIC rank-order diagnostic analysis complete.\n\nNOTE: COSMIC diagnostics are DESCRIPTIVE ONLY.\nNo inference, no statistical tests, no validation conclusions are drawn.\nCleaned dataset written: week2_cleaned_dataset_demo_fusion.csv\nCertification written: week2_dataset_certification_demo_fusion.json\nStatus written to C:\\Users\\enchi\\AppData\\Local\\Temp\\cosmic_audit_xs4tsuu7\\phase2_output\\week2_status_demo_fusion.json\n",
+        "stderr_snippet": ""
+      }
+    },
+    "COSMIC Functional Usage": {
+      "status": "INSUFFICIENT_EVIDENCE",
+      "evidence": {
+        "status": "NO_COSMIC_FILE"
+      }
+    },
+    "COSMIC Mapping Integrity": {
+      "status": "VALID",
+      "evidence": {
+        "normalization_tests": {
+          "gene_1": {
+            "uppercase_changes": 0,
+            "whitespace_changes": 0,
+            "total_values": 84
+          },
+          "gene_2": {
+            "uppercase_changes": 0,
+            "whitespace_changes": 0,
+            "total_values": 84
+          },
+          "pair_sorting": {
+            "pairs_changed": 48,
+            "total_pairs": 84
+          }
+        },
+        "gene_normalization_valid": true,
+        "duplicate_pairs_after_normalization": 9,
+        "unique_pairs": 75,
+        "total_pairs": 84
+      }
+    },
+    "COSMIC Statistical Agreement": {
+      "status": "INSUFFICIENT_EVIDENCE",
+      "evidence": {
+        "status": "INSUFFICIENT_DATA"
+      },
+      "metrics": {}
+    },
+    "COSMIC Biological Plausibility": {
+      "status": "REALISTIC",
+      "evidence": {
+        "known_drivers_found": [
+          "FGFR1",
+          "BCR",
+          "MLL",
+          "BRAF",
+          "TMPRSS2",
+          "ERG",
+          "PML",
+          "NTRK2",
+          "FGFR3",
+          "RUNX1",
+          "RARA",
+          "ALK",
+          "NTRK3",
+          "ROS1",
+          "RUNX1T1",
+          "AF4",
+          "NTRK1",
+          "FGFR2",
+          "PAX3",
+          "ETV1",
+          "EML4",
+          "FOXO1",
+          "RET",
+          "FLI1",
+          "ABL1",
+          "EWSR1"
+        ],
+        "known_hotspots_found": [
+          [
+            "ABL1",
+            "BCR"
+          ],
+          [
+            "EML4",
+            "ALK"
+          ],
+          [
+            "TMPRSS2",
+            "ERG"
+          ],
+          [
+            "NTRK1",
+            "TPM3"
+          ],
+          [
+            "ROS1",
+            "SLC34A2"
+          ],
+          [
+            "FGFR3",
+            "TACC3"
+          ],
+          [
+            "RET",
+            "KIF5B"
+          ]
+        ],
+        "driver_count": 26,
+        "hotspot_count": 7
+      }
+    },
+    "COSMIC Signal Non-Triviality": {
+      "status": "INSUFFICIENT_EVIDENCE",
+      "evidence": {
+        "status": "INSUFFICIENT_DATA"
+      }
+    },
+    "COSMIC Sensitivity To Dataset Changes": {
+      "status": "INSUFFICIENT_EVIDENCE",
+      "evidence": {
+        "status": "NO_COSMIC_FILE"
+      }
+    }
+  }
+}
