@@ -1,7 +1,6 @@
-# Results folder - generated output from validation runs (keep results/ and results/demo_fusion/)
+# Results folder - generated output from validation runs
 results/*
 !results/.gitkeep
-!results/demo_fusion/
 
 # Python cache
 __pycache__/

@@ -1,253 +1,127 @@
 # Week 2 Validation - Quick Start Guide
 
-**The Simplest Way to Run Everything** 🚀
+**Run the pipeline on your fusion data.** No demo datasets included — provide your own data file.
 
 ---
 
-## ⚡ One-Command Solutions
+## ⚡ Run the Pipeline
 
-### **Option 1: Python Script (Recommended - All Platforms)**
+### **Recommended: run_week2.py (full control)**
 
 ```bash
-python week2_validation/run_complete.py
+python -m week2_validation.run_week2 \
+    --fusion-data path/to/your_fusion_data.csv \
+    --output-dir output_name \
+    --run-all \
+    --generate-report \
+    --generate-pdf
 ```
 
-**That's it!** This single command:
-- ✅ Runs the complete validation pipeline with all diagnostics
-- ✅ Runs all 33 tests
-- ✅ Verifies outputs are generated
-- ✅ Checks new scientific defensibility features
-- ✅ Provides a clear success/failure report
+**From project root** (e.g. `HumanG_Fusion/`). Replace `path/to/your_fusion_data.csv` with your file and `output_name` with your output folder name.
 
 ---
 
-### **Option 2: Batch File (Windows - Double-Click)**
+### **Simplified: run_complete.py (pipeline + tests)**
 
-**Just double-click:** `week2_validation/run_validation.bat`
+```bash
+python week2_validation/run_complete.py path/to/your_fusion_data.csv output_name
+```
 
-No terminal needed! The batch file will:
-- Run everything automatically
-- Show progress in a command window
-- Wait for you to press a key when done
+This runs the validation pipeline and the test suite, then verifies outputs.
 
 ---
 
-### **Option 3: Shell Script (Linux/Mac)**
+### **Batch / shell scripts**
 
+**Windows:**
+```batch
+run_validation.bat path\to\your_fusion_data.csv output_name
+```
+
+**Linux/Mac:**
 ```bash
 chmod +x week2_validation/run_validation.sh
-./week2_validation/run_validation.sh
+./week2_validation/run_validation.sh path/to/your_fusion_data.csv output_name
 ```
 
 ---
 
-## 📋 Usage Examples
+## 📋 Input Requirements
 
-### **Basic Usage (Demo Data)**
-
-```bash
-# Uses demo_fusion.csv, outputs to demo_output/
-python week2_validation/run_complete.py
-```
-
-### **Custom Input File**
-
-```bash
-# Use your own data
-python week2_validation/run_complete.py path/to/your_data.csv
-```
-
-### **Custom Input and Output**
-
-```bash
-# Specify both input and output
-python week2_validation/run_complete.py path/to/data.csv output_folder/
-```
-
-### **With COSMIC Reference Data**
-
-```bash
-# Use real COSMIC instead of mock
-python week2_validation/run_complete.py data.csv output/ --cosmic cosmic.tsv
-```
-
-### **Skip Tests (Pipeline Only)**
-
-```bash
-# Run pipeline but skip test suite
-python week2_validation/run_complete.py --skip-tests
-```
-
-### **Get Help**
-
-```bash
-python week2_validation/run_complete.py --help
-```
-
----
-
-## 📊 What Gets Run?
-
-### **Validation Pipeline:**
-1. **Distribution Diagnostics** - Skewness, kurtosis, quantiles
-2. **Benford's Law Analysis** - First digit frequency distribution
-3. **Log-Normality Tests** - Kolmogorov-Smirnov, Anderson-Darling
-4. **Benford Statistical Controls** - Control validation
-5. **COSMIC Cross-Validation** with:
-   - Bootstrap confidence intervals (1000 iterations)
-   - Reproducibility lock metadata
-   - Score component breakdown
-   - Mock fallback if no COSMIC data
-
-### **Test Suite:**
-- All 33 tests including:
-  - Core validation tests
-  - COSMIC validation tests
-  - **New**: Bootstrap CI tests
-  - **New**: Reproducibility lock tests
-  - **New**: Mock distribution validation
-  - **New**: Score breakdown validation
-  - Cross-format compatibility tests
-
-### **Verification:**
-- Checks all expected output files exist
-- Verifies new scientific defensibility features
-- Reports file sizes and status
+- **Formats:** CSV, TSV, JSON, Parquet, or XLSX
+- **Required columns:** `fusion_id`, `gene_1`, `gene_2`, `protein_length`, `recurrence_count`
+- **Constraints:** `protein_length` > 0, `recurrence_count` >= 0, no nulls in required columns
 
 ---
 
 ## 📁 Output Files
 
-After running, check `demo_output/` (or your custom output folder):
+Outputs are written to `week2_validation/results/output_name/` (or the name you chose):
 
 ```
-demo_output/
-├── week2_status_demo_fusion.json                    ← Pipeline status
-├── week2_dataset_certification_demo_fusion.json     ← Certification
-├── week2_diagnostic_results_demo_fusion.json        ← All metrics
-├── week2_cleaned_dataset_demo_fusion.csv            ← Cleaned data
-├── Statistical_Integrity_Report_demo_fusion.md      ← Human-readable report
-├── protein_distribution.png                         ← Histogram
-├── skewness_diagnostic.png                          ← Skewness gauge
-└── run_log_demo_fusion.txt                          ← Execution log
+output_name/
+├── validation_status_{stem}.json              ← Pipeline status
+├── validation_dataset_certification_{stem}.json  ← Certification
+├── validation_diagnostic_results_{stem}.json    ← All metrics
+├── validation_cleaned_dataset_{stem}.csv        ← Cleaned data
+├── Statistical_Integrity_Report_{stem}.md       ← Narrative report
+├── data_integrity_validation_report.pdf         ← PDF report (with --generate-pdf)
+├── data_integrity_validation_report.html        ← HTML report
+├── protein_distribution.png                     ← Histogram
+├── skewness_diagnostic.png                      ← Skewness gauge
+├── benford_analysis.png                         ← Benford plot
+└── run_log_{stem}.txt                           ← Execution log
 ```
+
+`{stem}` is derived from your input filename (e.g. `my_fusion.parquet` → `my_fusion`).
 
 ---
 
-## 🎯 Expected Output
+## 🧬 COSMIC Reference
+
+The pipeline uses **real COSMIC Fusion v103 GRCh38** by default. The file must exist at:
 
 ```
-================================================================================
-  Week 2 Validation - Complete Pipeline Runner
-================================================================================
+week2_validation/cosmic/Cosmic_Fusion_v103_GRCh38.tsv
+```
 
-📂 Fusion data: week2_validation/demo_fusion.csv
-📁 Output directory: demo_output
-🧬 COSMIC data: Using mock fallback
+To use a different COSMIC file:
 
---------------------------------------------------------------------------------
-  Step 1: Running Validation Pipeline
---------------------------------------------------------------------------------
-
-🚀 Validation pipeline...
-   Command: python -m week2_validation.run_week2 --fusion-data week2_validation/demo_fusion.csv --output-dir demo_output --run-all
-
-✅ Validation pipeline completed successfully
-
---------------------------------------------------------------------------------
-  Step 2: Running Test Suite
---------------------------------------------------------------------------------
-
-🚀 Test suite...
-   Command: python -m pytest week2_validation/tests/ -v --tb=short
-
-✅ Test suite completed successfully
-
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  Verifying Outputs
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-  ✅ week2_status_demo_fusion.json (2,847 bytes)
-  ✅ week2_dataset_certification_demo_fusion.json (721 bytes)
-  ✅ week2_diagnostic_results_demo_fusion.json (5,432 bytes)
-  ✅ week2_cleaned_dataset_demo_fusion.csv (12,458 bytes)
-  ✅ Statistical_Integrity_Report_demo_fusion.md (18,234 bytes)
-  ✅ protein_distribution.png (45,672 bytes)
-  ✅ skewness_diagnostic.png (38,291 bytes)
-
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  Verifying New Features
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-  ✅ Bootstrap CI: [0.8234, 0.9567]
-  ✅ Reproducibility Lock:
-     - Python: 3.11.3
-     - NumPy: 1.24.3
-     - Code version: 1.1.0
-  ✅ Score Component Breakdown:
-     - Correlation: 0.50
-     - Enrichment: 0.20
-     - Negative Control: 0.15
-     - Overlap: 0.10
-
-================================================================================
-  Final Summary
-================================================================================
-
-🎉 SUCCESS! Complete validation finished.
-📊 All outputs generated in: demo_output/
-📄 View report: demo_output/Statistical_Integrity_Report_demo_fusion.md
+```bash
+python -m week2_validation.run_week2 \
+    --fusion-data path/to/your_data.csv \
+    --output-dir output_name \
+    --cosmic-data path/to/your_cosmic.tsv \
+    --run-all
 ```
 
 ---
 
 ## 🔧 Troubleshooting
 
-### **"Module not found" error**
+### **"Module not found"**
 ```bash
-# Make sure you're in the project root
-cd C:\Users\enchi\Documents\HumanG_Fusion
-python week2_validation/run_complete.py
+# Run from project root
+cd /path/to/HumanG_Fusion
+python -m week2_validation.run_week2 --help
 ```
 
 ### **"No such file or directory"**
+Ensure your fusion data file path is correct and the file exists.
+
+### **"COSMIC reference file not found"**
+Ensure `Cosmic_Fusion_v103_GRCh38.tsv` exists in `week2_validation/cosmic/`, or provide `--cosmic-data`.
+
+### **Generate sample data for testing**
 ```bash
-# Check the demo file exists
-dir week2_validation\demo_fusion.csv   # Windows
-ls week2_validation/demo_fusion.csv    # Linux/Mac
+python week2_validation/scripts/generate_demo_files.py
 ```
-
-### **Tests fail**
-This is OK! Some tests may fail if:
-- Demo data has no overlap with mock COSMIC (expected)
-- Optional dependencies missing (will be skipped)
-
-The pipeline still works correctly.
+Creates sample fusion files in `week2_validation/` for format testing.
 
 ---
 
 ## 📚 More Information
 
 - **Full command reference:** `week2_validation/RUN_COMMANDS.md`
-- **Implementation details:** `week2_validation/IMPLEMENTATION_SUMMARY.md`
 - **Statistical methodology:** `week2_validation/cosmic/statistical_methodology.md`
 - **Main README:** `week2_validation/README.md`
-
----
-
-## 💡 Pro Tips
-
-1. **First time?** Just run: `python week2_validation/run_complete.py`
-2. **Want to customize?** See `week2_validation/RUN_COMMANDS.md`
-3. **Need help?** Run: `python week2_validation/run_complete.py --help`
-4. **View the report:** Open `demo_output/Statistical_Integrity_Report_demo_fusion.md`
-
----
-
-**Bottom line:** The simplest command to run everything is:
-
-```bash
-python week2_validation/run_complete.py
-```
-
-No arguments needed. No complex syntax. Just works. ✅

@@ -2273,15 +2273,11 @@ def main() -> int:
                         generate_comprehensive_distribution_plot,
                         validate_input,
                     )
-                    # Load frozen data to get protein lengths for comprehensive plot
-                    frozen_path = config.output_dir / f"week2_frozen_{config.dataset_stem}.csv"
-                    if not frozen_path.exists():
-                        # Try alternative frozen path location
-                        import glob
-                        frozen_pattern = str(config.output_dir.parent / "week2_validation" / "frozen_inputs" / "*" / f"week2_cleaned_dataset_demo_fusion.csv")
-                        frozen_files = glob.glob(frozen_pattern)
-                        if frozen_files:
-                            frozen_path = Path(frozen_files[0])
+                    # Load cleaned dataset to get protein lengths for comprehensive plot
+                    cleaned_path = config.output_dir / CLEANED_DATASET_FILENAME_PATTERN.format(stem=config.dataset_stem)
+                    if not cleaned_path.exists():
+                        cleaned_path = config.output_dir / f"week2_cleaned_dataset_{config.dataset_stem}.csv"  # legacy
+                    frozen_path = cleaned_path
                     
                     if frozen_path.exists():
                         import numpy as np

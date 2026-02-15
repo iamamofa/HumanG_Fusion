@@ -8,17 +8,14 @@ Single-command execution of the entire Week 2 validation pipeline including:
 - Output verification
 
 Usage:
-    python week2_validation/run_complete.py [fusion_data] [output_dir]
+    python week2_validation/run_complete.py <fusion_data> <output_dir>
     
 Examples:
-    # Use demo data
-    python week2_validation/run_complete.py
+    # Run with your fusion data
+    python week2_validation/run_complete.py path/to/your_fusion_data.csv output_name
     
-    # Use custom data
-    python week2_validation/run_complete.py path/to/data.csv output/
-    
-    # With COSMIC data
-    python week2_validation/run_complete.py data.csv output/ --cosmic cosmic.tsv
+    # With custom COSMIC reference
+    python week2_validation/run_complete.py path/to/data.csv output_name --cosmic path/to/cosmic.tsv
 """
 
 import sys
@@ -159,38 +156,31 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Use demo data (default)
-  python week2_validation/run_complete.py
+  # Run with your fusion data
+  python week2_validation/run_complete.py path/to/your_fusion_data.csv output_name
   
-  # Use custom data
-  python week2_validation/run_complete.py path/to/data.csv output/
+  # With custom COSMIC reference
+  python week2_validation/run_complete.py path/to/data.csv output_name --cosmic path/to/cosmic.tsv
   
-  # With COSMIC reference data
-  python week2_validation/run_complete.py data.csv output/ --cosmic cosmic.tsv
-  
-  # Skip tests
-  python week2_validation/run_complete.py --skip-tests
+  # Skip tests (pipeline only)
+  python week2_validation/run_complete.py path/to/data.csv output_name --skip-tests
         """
     )
     
     parser.add_argument(
         'fusion_data',
-        nargs='?',
-        default='week2_validation/demo_fusion.csv',
-        help='Path to fusion data file (default: week2_validation/demo_fusion.csv)'
+        help='Path to fusion data file (CSV, TSV, JSON, Parquet, or XLSX)'
     )
     
     parser.add_argument(
         'output_dir',
-        nargs='?',
-        default='demo_output',
-        help='Output directory (default: demo_output, will be placed in week2_validation/results/)'
+        help='Output directory name (created under week2_validation/results/)'
     )
     
     parser.add_argument(
         '--cosmic',
         dest='cosmic_data',
-        help='Path to COSMIC reference data (optional, uses mock if not provided)'
+        help='Path to COSMIC reference data (optional; default: cosmic/Cosmic_Fusion_v103_GRCh38.tsv)'
     )
     
     parser.add_argument(
@@ -225,7 +215,7 @@ Examples:
     if args.cosmic_data:
         print(f"🧬 COSMIC data: {args.cosmic_data}")
     else:
-        print(f"🧬 COSMIC data: Using mock fallback")
+        print(f"🧬 COSMIC data: Using default (Cosmic_Fusion_v103_GRCh38.tsv)")
     print()
     
     # Determine dataset stem for output verification
