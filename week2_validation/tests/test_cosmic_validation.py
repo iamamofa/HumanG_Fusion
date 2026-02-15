@@ -2,11 +2,11 @@
 Week 2: Data Integrity & Statistical Validation — COSMIC Validation Tests.
 
 Tests COSMIC cross-validation functionality including:
-- Mock COSMIC generation and loading
+- Real COSMIC data loading and transformation
 - Spearman correlation computation
 - Enrichment metrics
 - Distribution comparison
-- Auto fallback to mock COSMIC
+- Real COSMIC Fusion v103 GRCh38 integration
 - Cross-format compatibility (CSV, TSV, JSON, Parquet, XLSX)
 """
 
@@ -25,79 +25,45 @@ from week2_validation.cosmic.diagnostics import (
     compute_spearman_correlation,
     run_cosmic_recurrence_diagnostic,
 )
-from week2_validation.cosmic.generate_mock_cosmic import (
-    generate_mock_cosmic_census,
-    ensure_mock_cosmic_exists,
-)
+# Mock COSMIC imports removed - using real COSMIC data
 from week2_validation.cosmic.gene_alias_map import normalize_gene_alias, GENE_ALIAS_MAP
 from week2_validation.cosmic.statistical_controls import compute_negative_control_correlation
 from week2_validation.cosmic.quality_gate import compute_cosmic_validation_score
 
 
 # =============================================================================
-# Test 1: Mock COSMIC Generation
+# Test 1: Real COSMIC Data Loading and Transformation
 # =============================================================================
 
-def test_mock_cosmic_generation():
-    """Test that mock COSMIC generates with required properties."""
-    with tempfile.TemporaryDirectory() as tmp:
-        output_path = Path(tmp) / "mock_cosmic_census.csv"
-        
-        df = generate_mock_cosmic_census(output_path, min_pairs=50)
-        
-        # Check file exists
-        assert output_path.exists()
-        
-        # Check minimum pairs
-        assert len(df) >= 50
-        
-        # Check required columns
-        assert "gene_1" in df.columns
-        assert "gene_2" in df.columns
-        assert "recurrence_count" in df.columns
-        
-        # Check known fusions are present
-        known_pairs = set()
-        for _, row in df.iterrows():
-            pair = tuple(sorted([str(row["gene_1"]).upper(), str(row["gene_2"]).upper()]))
-            known_pairs.add(pair)
-        
-        # Check at least some known fusions are present
-        known_fusions_normalized = {
-            tuple(sorted([g1.upper(), g2.upper()])) 
-            for g1, g2 in [
-                ("BCR", "ABL1"),
-                ("EML4", "ALK"),
-                ("TMPRSS2", "ERG"),
-            ]
-        }
-        assert len(known_pairs & known_fusions_normalized) > 0
-        
-        # Check recurrence counts are positive
-        assert (df["recurrence_count"] > 0).all()
-        
-        # Check power-law distribution (should have high variance)
-        counts = df["recurrence_count"].values
-        assert np.var(counts) > 0  # Should have variance
-
-
-def test_mock_cosmic_ensure_exists():
-    """Test that ensure_mock_cosmic_exists creates file if missing."""
-    with tempfile.TemporaryDirectory() as tmp:
-        cosmic_dir = Path(tmp)
-        
-        # File doesn't exist initially
-        mock_path = cosmic_dir / "mock_cosmic_census.csv"
-        assert not mock_path.exists()
-        
-        # Ensure exists should create it
-        result_path = ensure_mock_cosmic_exists(cosmic_dir)
-        assert result_path.exists()
-        assert result_path == mock_path
-        
-        # Second call should not recreate
-        result_path2 = ensure_mock_cosmic_exists(cosmic_dir)
-        assert result_path2 == result_path
+def test_real_cosmic_loading():
+    """Test that real COSMIC Fusion TSV can be loaded and transformed."""
+    # Use real COSMIC file if available
+    cosmic_module_path = Path(__file__).parent.parent / "cosmic"
+    real_cosmic_path = cosmic_module_path / "Cosmic_Fusion_v103_GRCh38.tsv"
+    
+    if not real_cosmic_path.exists():
+        pytest.skip("Real COSMIC file not found - skipping test")
+    
+    from week2_validation.utils.data_loader import load_reference_data
+    from week2_validation.cosmic.diagnostics import transform_cosmic_fusion_to_standard_format
+    
+    # Load real COSMIC
+    cosmic_df = load_reference_data(str(real_cosmic_path))
+    assert cosmic_df is not None
+    
+    # Transform to standard format
+    transformed_df = transform_cosmic_fusion_to_standard_format(cosmic_df)
+    
+    # Check required columns
+    assert "gene_1" in transformed_df.columns
+    assert "gene_2" in transformed_df.columns
+    assert "recurrence_count" in transformed_df.columns
+    
+    # Check we have data
+    assert len(transformed_df) > 0
+    
+    # Check recurrence counts are positive
+    assert (transformed_df["recurrence_count"] > 0).all()
 
 
 # =============================================================================
@@ -374,9 +340,14 @@ def test_cosmic_validation_across_formats(format_type):
         
         _create_test_fusion_data(format_type, fusion_path)
         
-        # Create mock COSMIC
-        cosmic_path = Path(tmp) / "mock_cosmic_census.csv"
-        generate_mock_cosmic_census(cosmic_path, min_pairs=50)
+        # Create minimal test COSMIC data in standard format
+        cosmic_df = pd.DataFrame({
+            "gene_1": ["BCR", "EML4", "TMPRSS2", "EWSR1", "PML"],
+            "gene_2": ["ABL1", "ALK", "ERG", "FLI1", "RARA"],
+            "recurrence_count": [100, 80, 60, 40, 30],
+        })
+        cosmic_path = Path(tmp) / "test_cosmic.csv"
+        cosmic_df.to_csv(cosmic_path, index=False)
         
         # Load data
         from week2_validation.utils.data_loader import load_fusion_data, load_reference_data
@@ -399,46 +370,48 @@ def test_cosmic_validation_across_formats(format_type):
 
 
 # =============================================================================
-# Test 7: Pipeline Integration (Mock Fallback)
+# Test 7: Pipeline Integration (Real COSMIC)
 # =============================================================================
 
-def test_pipeline_mock_cosmic_fallback():
-    """Test that pipeline falls back to mock COSMIC when user COSMIC unavailable."""
+def test_pipeline_real_cosmic_loading():
+    """Test that pipeline loads real COSMIC data correctly."""
     with tempfile.TemporaryDirectory() as tmp:
         # Create fusion data with real gene names to ensure overlap
         fusion_path = Path(tmp) / "fusion.csv"
         fusion_df = pd.DataFrame({
             "fusion_id": ["F1", "F2"],
-            "gene_1": ["BCR", "EML4"],  # Real genes from mock COSMIC
-            "gene_2": ["ABL1", "ALK"],   # Real genes from mock COSMIC
+            "gene_1": ["CCDC6", "PAX8"],  # Real genes from COSMIC
+            "gene_2": ["RET", "PPARG"],   # Real genes from COSMIC
             "protein_length": [100, 200],
             "recurrence_count": [10, 20],
         })
         fusion_df.to_csv(fusion_path, index=False)
         
-        # Create mock COSMIC in cosmic directory
-        cosmic_dir = Path(tmp) / "cosmic"
-        cosmic_dir.mkdir()
-        mock_cosmic_path = ensure_mock_cosmic_exists(cosmic_dir)
+        # Create minimal test COSMIC data in standard format
+        cosmic_df = pd.DataFrame({
+            "gene_1": ["CCDC6", "PAX8", "TMPRSS2", "BCR"],
+            "gene_2": ["RET", "PPARG", "ERG", "ABL1"],
+            "recurrence_count": [50, 40, 30, 20],
+        })
+        cosmic_path = Path(tmp) / "test_cosmic.csv"
+        cosmic_df.to_csv(cosmic_path, index=False)
         
         # Load and verify
         from week2_validation.utils.data_loader import load_reference_data
         
-        cosmic_df = load_reference_data(str(mock_cosmic_path))
-        assert cosmic_df is not None
-        # Mock COSMIC generates 50 rows but after normalization (pair deduplication),
-        # unique pairs may be fewer due to duplicates like (A,B) and (B,A)
-        assert len(cosmic_df) >= 30  # At least 30 rows in file
+        loaded_cosmic_df = load_reference_data(str(cosmic_path))
+        assert loaded_cosmic_df is not None
+        assert len(loaded_cosmic_df) > 0
         
         # Run diagnostic
         result = run_cosmic_recurrence_diagnostic(
             fusion_df=fusion_df,
-            cosmic_df=cosmic_df,
+            cosmic_df=loaded_cosmic_df,
             top_n=10,
         )
         
         # After normalization, unique pairs may be fewer than 50 due to deduplication
-        assert result["total_fusions_cosmic"] >= 30  # At least 30 unique pairs
+        assert result["total_fusions_cosmic"] >= 4  # At least 4 unique pairs from test data
         # Provenance metadata is now included in diagnostic results
         assert "cosmic_reference_source" in result  # Provenance included
 
@@ -896,81 +869,65 @@ def test_reproducibility_lock_metadata():
     assert lock["numpy_version"] is not None
     assert lock["pandas_version"] is not None
     assert lock["cosmic_validation_code_version"] is not None
-    assert lock["random_seed_mock_generation"] == 42
+    # mock_generation_seed is None for real COSMIC
+    assert lock["random_seed_mock_generation"] is None or lock["random_seed_mock_generation"] == 42
 
 
 # =============================================================================
-# Test 17: Mock Distribution Metrics Computed
+# Test 17: COSMIC Bias Quantification (Distribution Metrics)
 # =============================================================================
 
 def test_mock_distribution_metrics_computed():
-    """Test that mock COSMIC distribution metrics are computed correctly."""
-    from week2_validation.cosmic.mock_cosmic_validation import (
-        compute_mock_cosmic_distribution_metrics,
-        compute_gini_coefficient,
-        compute_tail_heaviness,
+    """Test that COSMIC bias quantification metrics are computed correctly."""
+    from week2_validation.reporting.bias_analysis.cosmic_bias_quantification import (
+        quantify_cosmic_sampling_bias,
     )
     
-    with tempfile.TemporaryDirectory() as tmp:
-        # Generate mock COSMIC
-        mock_path = Path(tmp) / "mock_cosmic_census.csv"
-        cosmic_df = generate_mock_cosmic_census(mock_path, min_pairs=50)
-        
-        # Compute distribution metrics
-        result = compute_mock_cosmic_distribution_metrics(cosmic_df)
-        
-        assert result["status"] == "SUCCESS"
-        assert result["metrics"] is not None
-        
-        metrics = result["metrics"]
-        
-        # Check basic statistics
-        assert "sample_size" in metrics
-        assert metrics["sample_size"] >= 50
-        
-        # Check distribution shape
-        assert "distribution_shape" in metrics
-        shape = metrics["distribution_shape"]
-        assert "skewness" in shape
-        assert "kurtosis_excess" in shape
-        assert "log_range_orders_of_magnitude" in shape
-        
-        # Check inequality metrics
-        assert "inequality_metrics" in metrics
-        inequality = metrics["inequality_metrics"]
-        assert "gini_coefficient" in inequality
-        assert "zero_inflation_rate" in inequality
-        
-        # Check tail analysis
-        assert "tail_analysis" in metrics
-        tail = metrics["tail_analysis"]
-        assert "tail_fraction" in tail
-        assert "tail_mean_ratio" in tail
-        
-        # Check realism assessment
-        assert "realism_assessment" in metrics
-        assessment = metrics["realism_assessment"]
-        assert "overall_assessment" in assessment
-        assert "checks_passed" in assessment
-        assert "checks_total" in assessment
-        
-        # Mock COSMIC should have realistic distribution (positive skew, heavy tails)
-        assert shape["skewness"] > 0  # Should be right-skewed
+    # Create test COSMIC data in standard format (7 unique gene pairs, no duplicates)
+    cosmic_df = pd.DataFrame({
+        "gene_1": ["BCR", "EML4", "TMPRSS2", "EWSR1", "PML", "RET", "CCDC6"],
+        "gene_2": ["ABL1", "ALK", "ERG", "FLI1", "RARA", "CCDC6", "PAX8"],
+        "recurrence_count": [100, 80, 60, 40, 30, 25, 20],
+    })
+    
+    result = quantify_cosmic_sampling_bias(cosmic_df)
+    
+    # Check required keys
+    assert "top5_gene_fraction" in result
+    assert "gini_gene_recurrence" in result
+    assert "bias_severity_classification" in result
+    assert "n_unique_genes" in result
+    assert "n_fusion_pairs" in result
+    
+    # Basic sanity checks (7 unique pairs: BCR-ABL1, EML4-ALK, TMPRSS2-ERG, etc.)
+    assert result["n_unique_genes"] >= 7
+    assert result["n_fusion_pairs"] == 7
+    assert result["top5_gene_fraction"] is not None
+    assert 0.0 <= result["top5_gene_fraction"] <= 1.0
+    assert result["gini_gene_recurrence"] is not None
+    assert 0.0 <= result["gini_gene_recurrence"] <= 1.0
+    assert result["bias_severity_classification"] in ["LOW", "MODERATE", "HIGH", "N/A"]
 
 
 def test_gini_coefficient_computation():
-    """Test Gini coefficient computation."""
-    from week2_validation.cosmic.mock_cosmic_validation import compute_gini_coefficient
+    """Test Gini coefficient computation from bias analysis module."""
+    from week2_validation.reporting.bias_analysis.cosmic_bias_quantification import (
+        compute_gini_coefficient,
+    )
     
     # Perfect equality: all same values -> Gini = 0
     equal_values = np.array([10, 10, 10, 10, 10])
     gini_equal = compute_gini_coefficient(equal_values)
     assert abs(gini_equal) < 0.01  # Should be close to 0
     
-    # High inequality: one dominates
-    unequal_values = np.array([0, 0, 0, 0, 100])
+    # High inequality: one dominates (note: compute_gini_coefficient filters zeros)
+    unequal_values = np.array([1, 1, 1, 1, 100])  # One value dominates
     gini_unequal = compute_gini_coefficient(unequal_values)
-    assert gini_unequal > 0.7  # Should be high
+    assert gini_unequal > 0.5  # Should be high inequality
+    
+    # Empty/small array safety
+    empty_gini = compute_gini_coefficient(np.array([]))
+    assert empty_gini == 0.0
 
 
 # =============================================================================

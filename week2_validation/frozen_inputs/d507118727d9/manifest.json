@@ -1,8 +1,0 @@
-{
-  "source_path": "C:\\Users\\enchi\\Documents\\HumanG_Fusion\\week2_validation\\math_validation_audit\\synthetic_tests\\edge_case_heavy_duplicates.csv",
-  "frozen_by": "week2_validation",
-  "frozen_at_utc": "2026-02-02T08:40:11.102547+00:00",
-  "file_hash_sha256": "d507118727d9a1998592770ec128261d923a6ef1ffbe6bf120282b04c6ddda0e",
-  "week2_version": "0.1.0",
-  "original_filename": "edge_case_heavy_duplicates.csv"
-}

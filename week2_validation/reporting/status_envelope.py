@@ -1,5 +1,5 @@
 """
-Week 2: Data Integrity & Statistical Validation — Machine Status Envelope.
+Data Integrity & Statistical Validation — Machine Status Envelope.
 
 Extends (not replaces) JSON summary with runtime metadata.
 Sanitizes notes to avoid leaking absolute paths, stack traces, or user home.
@@ -10,9 +10,9 @@ from datetime import datetime, timezone
 from typing import Optional
 
 try:
-    from week2_validation import __version__ as WEEK2_VERSION
+    from week2_validation import __version__ as VALIDATION_VERSION
 except ImportError:
-    WEEK2_VERSION = "unknown"
+    VALIDATION_VERSION = "unknown"
 
 
 def _sanitize_note(note: str) -> str:
@@ -73,6 +73,8 @@ def build_status_envelope(
     diagnostics_skipped: Optional[bool] = None,
     skip_reason: Optional[str] = None,
     benford_scale_span: Optional[float] = None,
+    quality_gates: Optional[dict] = None,
+    data_provenance: Optional[dict] = None,
 ) -> dict:
     """
     Build machine-readable status envelope with runtime metadata.
@@ -89,7 +91,7 @@ def build_status_envelope(
         psutil_available: True if psutil import succeeded at runtime (observability only).
 
     Returns:
-        Dict with week2_version, run_timestamp_utc, dataset_hash,
+        Dict with validation_version, run_timestamp_utc, dataset_hash,
         diagnostics_run, exit_code, status, notes.
         Optional keys added when provided. JSON-serializable.
     """
@@ -112,7 +114,7 @@ def build_status_envelope(
             "WARNING: Statistical range insufficient for reliable Benford and Power-Law modeling."
         )
     envelope = {
-        "week2_version": WEEK2_VERSION,
+        "validation_version": VALIDATION_VERSION,
         "run_timestamp_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "dataset_hash": dataset_hash,
         "diagnostics_run": list(diagnostics_run),
@@ -135,4 +137,8 @@ def build_status_envelope(
             "skipped": True,
             "skip_reason": skip_reason or "EMPTY_DATASET",
         }
+    if quality_gates is not None:
+        envelope["quality_gates"] = dict(quality_gates)
+    if data_provenance is not None:
+        envelope["data_provenance"] = dict(data_provenance)
     return envelope

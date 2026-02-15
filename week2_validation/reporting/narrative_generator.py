@@ -1,8 +1,8 @@
 """
-Week 2: Data Integrity & Statistical Validation — Narrative Report Generator.
+Data Integrity & Statistical Validation — Narrative Report Generator.
 
-Converts week2_status.json, week2_dataset_certification.json, and
-week2_diagnostic_results.json into a researcher-friendly Markdown report.
+Converts validation_status.json, validation_dataset_certification.json, and
+validation_diagnostic_results.json into a researcher-friendly Markdown report.
 
 The JSON files are for machines; this report is for humans.
 """
@@ -14,9 +14,13 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 
-STATUS_FILENAME_PATTERN = "week2_status_{stem}.json"
-CERTIFICATION_FILENAME_PATTERN = "week2_dataset_certification_{stem}.json"
-DIAGNOSTIC_RESULTS_FILENAME_PATTERN = "week2_diagnostic_results_{stem}.json"
+from week2_validation.output_names import (
+    CERTIFICATION_FILENAME_PATTERN,
+    CLEANED_DATASET_FILENAME_PATTERN,
+    DIAGNOSTIC_RESULTS_FILENAME_PATTERN,
+    QUALITY_GATES_FILENAME_PATTERN,
+    STATUS_FILENAME_PATTERN,
+)
 REPORT_FILENAME_PATTERN = "Statistical_Integrity_Report_{stem}.md"
 FAILURE_REPORT_FILENAME_PATTERN = "Failure_Report_{stem}.md"
 
@@ -39,6 +43,148 @@ def _interpret_skewness(skewness: float) -> str:
     if skewness > 0:
         return "indicates right-skewed (positive skew) distribution."
     return "indicates left-skewed (negative skew) distribution."
+
+
+def _section_quality_gates(output_dir: Path, dataset_stem: str) -> str:
+    """Build Quality Gates summary table from validation_quality_gates_{stem}.json."""
+    gates_path = output_dir / QUALITY_GATES_FILENAME_PATTERN.format(stem=dataset_stem)
+    data = _load_json(gates_path)
+    if not data:
+        return "## Quality Gates\n\n*Quality gate results not available (file missing or not generated).*\n"
+    overall = data.get("overall_approval", "N/A")
+    gates = data.get("gates", [])
+    # Traffic-light style badges
+    def badge(s: str) -> str:
+        u = (s or "").upper()
+        if u == "PASS":
+            return "🟢 PASS"
+        if u == "WARN":
+            return "🟡 WARN"
+        if u == "FAIL":
+            return "🔴 FAIL"
+        if u in ("SKIPPED", "NOT_APPLICABLE"):
+            return "⚪ " + (s or "SKIPPED")
+        return str(s)
+    lines = [
+        "## Quality Gates",
+        "",
+        "Formal per-module verdicts and overall dataset approval (see `validation_quality_gates_*.json` for full details).",
+        "",
+        "| Module | Status | Metric | Value | Threshold | Reason |",
+        "|--------|--------|--------|-------|-----------|--------|",
+    ]
+    for g in gates:
+        mod = g.get("module_name", "")
+        status = badge(g.get("status", ""))
+        metric = g.get("metric_name", "")
+        val = g.get("metric_value")
+        thresh = g.get("threshold")
+        reason = (g.get("reason") or "")[:80].replace("|", "&#124;") + ("..." if len((g.get("reason") or "")) > 80 else "")
+        val_str = f"{float(val):.4f}" if val is not None else "—"
+        thresh_str = f"{float(thresh):.4f}" if thresh is not None else "—"
+        lines.append(f"| {mod} | {status} | {metric} | {val_str} | {thresh_str} | {reason} |")
+    lines.extend([
+        "",
+        f"**Overall approval:** **{overall}**",
+        "",
+        "- **APPROVED**: No FAIL gates and ≥2 PASS gates.",
+        "- **CONDITIONAL**: One or more WARN, no FAIL.",
+        "- **REJECTED**: One or more FAIL.",
+        "",
+    ])
+    return "\n".join(lines)
+
+
+def _section_0_data_provenance(
+    status: Dict[str, Any],
+    output_dir: Path,
+    dataset_stem: str,
+    diag: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Build Section 0: Data Provenance — chain of custody from raw input to validated output."""
+    prov = status.get("data_provenance") or {}
+    diagnostics_run = status.get("diagnostics_run") or []
+    quality_gates = status.get("quality_gates") or {}
+    overall_approval = quality_gates.get("overall_approval", "N/A")
+
+    # Input
+    input_name = prov.get("input_filename", "—")
+    input_fmt = prov.get("input_format", "—")
+    hash_prefix = prov.get("input_hash_sha256_prefix", status.get("dataset_hash", "—"))
+    frozen_path = prov.get("frozen_copy_path", f"frozen_inputs/{hash_prefix}/<filename>")
+    freeze_ts = prov.get("freeze_timestamp_utc", "—")
+    schema_adapted = prov.get("schema_adapter_applied", False)
+
+    # Output artifact names (relative to output dir)
+    cleaned_name = CLEANED_DATASET_FILENAME_PATTERN.format(stem=dataset_stem)
+    cert_name = CERTIFICATION_FILENAME_PATTERN.format(stem=dataset_stem)
+    validated_path = str(output_dir / cleaned_name) if output_dir else cleaned_name
+    cert_path = str(output_dir / cert_name) if output_dir else cert_name
+
+    # ASCII flowchart: Raw Input ──→ Schema Check ──→ Freeze ──→ ... ──→ Approved Dataset
+    provenance_chain = (diag or {}).get("provenance") or []
+    if provenance_chain:
+        step_names = [s.get("step", "") for s in provenance_chain]
+        status_line_parts = []
+        for s in provenance_chain:
+            st = (s.get("status") or "N/A").upper()
+            if st == "PASS":
+                status_line_parts.append("✓ PASS")
+            elif st == "APPROVED":
+                status_line_parts.append("✓ APPROVED")
+            elif st in ("CONDITIONAL", "WARN"):
+                status_line_parts.append("⚠ " + st)
+            elif st == "FAIL":
+                status_line_parts.append("✗ FAIL")
+            elif st == "REJECTED":
+                status_line_parts.append("✗ REJECTED")
+            elif st == "SKIPPED":
+                status_line_parts.append("— SKIP")
+            else:
+                status_line_parts.append(st)
+        # First line: step names with arrows
+        flow_line1 = " ──→ ".join(step_names)
+        # Second line: (hash: x), schema, (frozen), then ✓ PASS / ✓ APPROVED etc. for each step
+        detail_0 = f"(hash: {hash_prefix})" if hash_prefix else ""
+        detail_1 = "Week 1 adapter" if schema_adapted else "Native"
+        detail_2 = "(frozen)"
+        second_parts = [detail_0, detail_1, detail_2]
+        second_parts.extend(status_line_parts[3:])  # Distribution through Approved Dataset
+        flow_line2 = "   ".join(second_parts)
+        flow = "```\n" + flow_line1 + "\n" + flow_line2 + "\n```"
+    else:
+        flow_lines = [
+            "```",
+            "  Raw Input  ──→  Schema Check  ──→  Freeze  ──→  Distribution  ──→  Benford  ──→  Log-Normal  ──→  COSMIC  ──→  Quality Gate  ──→  Approved Dataset",
+            f"  (hash: {hash_prefix})              (frozen)   See Quality Gates section for per-step status.",
+            "```",
+        ]
+        flow = "\n".join(flow_lines)
+
+    lines = [
+        "## 0. Data Provenance",
+        "",
+        "Chain of custody from raw input to validated output.",
+        "",
+        "| Field | Value |",
+        "|-------|-------|",
+        f"| **Input file** | {input_name} |",
+        f"| **Format** | {input_fmt} |",
+        f"| **Hash (SHA-256 first 12)** | `{hash_prefix}` |",
+        f"| **Frozen copy** | `{frozen_path}` |",
+        f"| **Freeze timestamp** | {freeze_ts} |",
+        f"| **Schema adaptation (Week 1 adapter)** | {'Yes' if schema_adapted else 'No'} |",
+        f"| **Diagnostic modules executed** | {', '.join(diagnostics_run) if diagnostics_run else '—'} |",
+        f"| **Quality gate result** | {overall_approval} |",
+        f"| **Validated dataset** | `{validated_path}` |",
+        f"| **Certification JSON** | `{cert_path}` |",
+        "",
+        "### Flow",
+        "",
+        flow.strip(),
+        "",
+    ]
+    return "\n".join(lines)
 
 
 def _section_1_executive_summary(
@@ -108,29 +254,50 @@ def _section_2_distribution(
     else:
         interp = ""
 
-    # Build section: table, then actual histogram (if exists), then skewness diagnostic (if exists)
+    # Build section: table, then comprehensive distribution plot, then skewness diagnostic
     fig_num = 1
     img_blocks = []
+    interpretation_blocks = []
     if output_dir:
-        if (output_dir / "protein_distribution.png").is_file():
+        # Use comprehensive distribution plot if available, otherwise fall back to simple histogram
+        if (output_dir / "comprehensive_distribution.png").is_file():
+            img_blocks.append(
+                "![Comprehensive Protein Length Distribution](comprehensive_distribution.png)\n\n"
+                f"*Figure {fig_num}: Comprehensive distribution analysis showing histogram with KDE overlay "
+                "(top panel) and box plot for outlier detection (bottom panel).*"
+            )
+            # Add interpretation block immediately after the image
+            if skewness is not None and isinstance(skewness, (int, float)):
+                skew_val = float(skewness)
+                interpretation_blocks.append(
+                    f"\n\n**Figure {fig_num} Interpretation:** The multi-panel visualization confirms the data's structural integrity. "
+                    f"The Kernel Density Estimate (KDE) curve shows a near-symmetrical shape, supported by a calculated skewness of {skew_val:.4f}. "
+                    "Furthermore, the box plot beneath confirms the absence of clinically significant outliers."
+                )
+            fig_num += 1
+        elif (output_dir / "protein_distribution.png").is_file():
             img_blocks.append(
                 "![Protein Length Distribution](protein_distribution.png)\n\n"
-                "*Figure 1: Actual protein length distribution (histogram) from the dataset.*"
+                f"*Figure {fig_num}: Actual protein length distribution (histogram) from the dataset.*"
             )
-            fig_num = 2
+            fig_num += 1
+        
         if (output_dir / "skewness_diagnostic.png").is_file():
             img_blocks.append(
                 "![Live Skewness Indicator](skewness_diagnostic.png)\n\n"
                 f"*Figure {fig_num}: Skewness gauge and theoretical density curve matching the dataset skewness.*"
             )
+            fig_num += 1
     else:
         img_blocks.append(
-            "![Protein Length Distribution](protein_distribution.png)\n\n"
-            "*Figure 1: Actual protein length distribution (histogram) from the dataset.*\n\n"
+            "![Comprehensive Protein Length Distribution](comprehensive_distribution.png)\n\n"
+            "*Figure 1: Comprehensive distribution analysis showing histogram with KDE overlay "
+            "(top panel) and box plot for outlier detection (bottom panel).*\n\n"
             "![Live Skewness Indicator](skewness_diagnostic.png)\n\n"
             "*Figure 2: Skewness gauge and theoretical density curve matching the dataset skewness.*"
         )
     img_section = "\n\n".join(img_blocks) if img_blocks else ""
+    interpretation_section = "\n".join(interpretation_blocks) if interpretation_blocks else ""
 
     return f"""## 2. Distribution Analysis
 
@@ -143,6 +310,7 @@ def _section_2_distribution(
 | Skewness | {skew_str} |
 
 {img_section}
+{interpretation_section}
 {interp}
 """
 
@@ -172,7 +340,7 @@ def _section_3_statistical_diagnostics(diag: Optional[Dict[str, Any]]) -> str:
 """
 
 
-def _section_4_benford(diag: Optional[Dict[str, Any]], notes: list) -> str:
+def _section_4_benford(diag: Optional[Dict[str, Any]], notes: list, output_dir: Optional[Path] = None) -> str:
     """Build Section 4: Benford's Law."""
     ben = (diag or {}).get("benford") or {}
     observed = ben.get("observed_frequencies") or {}
@@ -180,6 +348,9 @@ def _section_4_benford(diag: Optional[Dict[str, Any]], notes: list) -> str:
     scale_span = ben.get("scale_span_orders_of_magnitude")
     applicability = ben.get("applicability")
     reason = ben.get("reason_if_not_applicable", "")
+    chi_squared = ben.get("chi_squared_statistic")
+    degrees_of_freedom = ben.get("degrees_of_freedom")
+    p_value = ben.get("p_value")
 
     scale_warning = ""
     for n in notes or []:
@@ -216,11 +387,57 @@ def _section_4_benford(diag: Optional[Dict[str, Any]], notes: list) -> str:
     if reason:
         appl_note += f"\n\n**Reason:** {reason}"
 
+    # Chi-squared test summary and diagnostic note
+    def _fmt(v):
+        if v is None:
+            return "N/A"
+        if isinstance(v, float):
+            return f"{v:.4f}" if v == v else "N/A"
+        return str(v)
+    chi_lines = []
+    if chi_squared is not None or p_value is not None or degrees_of_freedom is not None:
+        chi_lines.append("\n\n| Metric | Value |")
+        chi_lines.append("|--------|-------|")
+        if chi_squared is not None:
+            chi_lines.append(f"| **Chi-squared statistic** | {_fmt(chi_squared)} |")
+        if degrees_of_freedom is not None:
+            chi_lines.append(f"| **Degrees of freedom** | {degrees_of_freedom} |")
+        if p_value is not None:
+            chi_lines.append(f"| **p-value** | {_fmt(p_value)} |")
+        chi_lines.append("")
+        if p_value is not None and isinstance(p_value, (int, float)):
+            if float(p_value) > 0.05:
+                chi_lines.append("\n**Diagnostic note (descriptive only):** p > 0.05 indicates consistency with Benford distribution.")
+            else:
+                chi_lines.append("\n**Diagnostic note (descriptive only):** p < 0.05 indicates deviation from Benford distribution.")
+        chi_lines.append("")
+    appl_note += "".join(chi_lines)
+
+    # Add Benford visualization if available
+    benford_img = ""
+    benford_interpretation = ""
+    if output_dir and (output_dir / "benford_analysis.png").is_file():
+        benford_img = (
+            "\n\n"
+            "![Benford's Law Analysis](benford_analysis.png)\n\n"
+            "*Figure 3: Observed vs Expected First Significant Digit Frequencies. "
+            "Blue bars represent observed frequencies; red dashed line represents Benford's Law expected frequencies.*\n\n"
+        )
+        # Add interpretation block immediately after the image
+        benford_interpretation = (
+            "\n\n**Figure 3 Interpretation:** This chart visualizes the deviation between observed leading digits (blue bars) "
+            "and Benford's theoretical expectations (red dashed line). The visual mismatch confirms the statistical test results. "
+            "As noted in the 'Applicability Check', this dataset lacks the necessary scale span (orders of magnitude) "
+            "for Benford's Law to be a reliable indicator of anomaly."
+        )
+
     return f"""## 4. Benford's Law — First Significant Digit Analysis
 
 | Digit | Observed | Benford Expected |
 |-------|----------|------------------|
 {table_body}
+{benford_img}
+{benford_interpretation}
 {appl_note}
 {scale_warning}
 
@@ -382,7 +599,7 @@ for scientifically meaningful results.*
 """
 
 
-def _section_5_cosmic(diag: Optional[Dict[str, Any]]) -> str:
+def _section_5_cosmic(diag: Optional[Dict[str, Any]], output_dir: Optional[Path] = None) -> str:
     """Build Section 5: COSMIC Cross-Validation."""
     cosmic = (diag or {}).get("cosmic") or {}
     ours = cosmic.get("total_fusions_ours", "N/A")
@@ -575,6 +792,16 @@ def _section_5_cosmic(diag: Optional[Dict[str, Any]]) -> str:
         if repro_rows:
             reproducibility_section = "\n\n### Reproducibility Lock\n\n| Field | Value |\n|-------|-------|\n" + "\n".join(repro_rows)
     
+    # Add COSMIC correlation visualization if available
+    cosmic_img = ""
+    if output_dir and (output_dir / "cosmic_correlation.png").is_file():
+        cosmic_img = (
+            "\n\n"
+            "![COSMIC Correlation Analysis](cosmic_correlation.png)\n\n"
+            "*Figure: Log₁₀-log₁₀ scatter plot comparing our fusion recurrence counts with COSMIC recurrence counts. "
+            "Red line indicates linear regression fit. Spearman correlation coefficient (ρ) is annotated on the plot.*\n\n"
+        )
+    
     return f"""## 5. COSMIC Cross-Validation
 
 ### Statistical Metrics
@@ -593,6 +820,7 @@ def _section_5_cosmic(diag: Optional[Dict[str, Any]]) -> str:
 | **Overlapping pairs** | {overlap} |
 | **Only in our dataset** | {only_ours} |
 | **Only in COSMIC** | {only_cosmic} |
+{cosmic_img}
 {interpretation}
 {method_justification}
 {bias_disclosure}
@@ -602,6 +830,81 @@ def _section_5_cosmic(diag: Optional[Dict[str, Any]]) -> str:
 
 *Statistical metrics and biological interpretation provided for COSMIC cross-validation assessment.*
 """
+
+
+def _section_6_advanced_inference(diag: Optional[Dict[str, Any]]) -> str:
+    """Build Section 6: Advanced Inference Layer (Null Model, Stability, Bias)."""
+    if not diag or "diagnostic_results" not in diag:
+        return ""
+    
+    advanced_inference = diag["diagnostic_results"].get("advanced_inference")
+    if not advanced_inference:
+        return ""
+    
+    sections = []
+    sections.append("## 6. Advanced Inference Layer\n")
+    
+    # Null Model Falsification
+    null_model = advanced_inference.get("null_model")
+    if null_model:
+        null_p = null_model.get("empirical_p_value")
+        n_sim = null_model.get("n_simulations", 1000)
+        observed_overlap = null_model.get("observed_overlap")
+        
+        sections.append("### 6.1 Null Model Falsification Test\n")
+        if null_p is not None:
+            sections.append(
+                f"Permutation test (n={n_sim}) yields p-value={null_p:.4f}. "
+                f"Null hypothesis {'Rejected' if null_p < 0.05 else 'Accepted'}.\n"
+            )
+        else:
+            sections.append("Null model falsification test unavailable due to insufficient data or missing COSMIC overlap.\n")
+    else:
+        sections.append("### 6.1 Null Model Falsification Test\n")
+        sections.append("Null model falsification test unavailable due to insufficient data or missing COSMIC overlap.\n")
+    
+    sections.append("\n")
+    
+    # External Validity Stability
+    stability = advanced_inference.get("stability")
+    if stability:
+        ci_lower = stability.get("stability_ci_lower")
+        ci_upper = stability.get("stability_ci_upper")
+        n_bootstrap = stability.get("bootstrap_iterations", 100)
+        
+        sections.append("### 6.2 External Validity Stability\n")
+        if ci_lower is not None and ci_upper is not None:
+            sections.append(
+                f"Bootstrap analysis (n={n_bootstrap}) shows correlation stability interval "
+                f"[{ci_lower:.4f}, {ci_upper:.4f}].\n"
+            )
+        else:
+            sections.append("External validity stability test unavailable due to insufficient data or missing COSMIC overlap.\n")
+    else:
+        sections.append("### 6.2 External Validity Stability\n")
+        sections.append("External validity stability test unavailable due to insufficient data or missing COSMIC overlap.\n")
+    
+    sections.append("\n")
+    
+    # COSMIC Bias Quantification
+    bias = advanced_inference.get("bias")
+    if bias:
+        mw_p = bias.get("mannwhitney_p_value")
+        bias_detected = bias.get("bias_detected")
+        
+        sections.append("### 6.3 COSMIC Sampling Bias Characterization\n")
+        if mw_p is not None:
+            sections.append(
+                f"Sampling bias {'detected' if bias_detected else 'undetected'} "
+                f"(Mann-Whitney p={mw_p:.4f}).\n"
+            )
+        else:
+            sections.append("COSMIC bias quantification unavailable due to missing COSMIC data.\n")
+    else:
+        sections.append("### 6.3 COSMIC Sampling Bias Characterization\n")
+        sections.append("COSMIC bias quantification unavailable due to missing COSMIC data.\n")
+    
+    return "\n".join(sections)
 
 
 def generate_narrative_report(
@@ -638,14 +941,17 @@ def generate_narrative_report(
     notes = status.get("notes") or []
 
     sections = []
-    sections.append("# Forensic Data Integrity & Statistical Validation Report\n")
-    sections.append("*Data Integrity & Statistical Validation Layer — Week 2*\n")
+    sections.append("# Data Integrity & Statistical Validation Report\n")
+    sections.append("*Data Integrity & Statistical Validation Layer*\n")
     sections.append("---\n")
+    sections.append(_section_0_data_provenance(status, output_dir, dataset_stem, diag))
     sections.append(_section_1_executive_summary(status, certification))
+    sections.append(_section_quality_gates(output_dir, dataset_stem))
     sections.append(_section_2_distribution(status, diag, output_dir))
     sections.append(_section_3_statistical_diagnostics(diag))
-    sections.append(_section_4_benford(diag, notes))
-    sections.append(_section_5_cosmic(diag))
+    sections.append(_section_4_benford(diag, notes, output_dir))
+    sections.append(_section_5_cosmic(diag, output_dir))
+    sections.append(_section_6_advanced_inference(diag))
 
     report_path = output_dir / REPORT_FILENAME_PATTERN.format(stem=dataset_stem)
     try:

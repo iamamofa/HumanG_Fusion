@@ -1,9 +1,9 @@
 """
-Week 2: Data Integrity & Statistical Validation — Approved Dataset Writer (Deliverable Completion Layer).
+Data Integrity & Statistical Validation — Approved Dataset Writer (Deliverable Completion Layer).
 
 When validation succeeds, optionally writes:
-  1. week2_cleaned_dataset.csv — copy of frozen validated dataset (no modifications).
-  2. week2_dataset_certification.json — certification record for power-law modeling.
+  1. validation_cleaned_dataset_{stem}.csv — copy of frozen validated dataset (no modifications).
+  2. validation_dataset_certification_{stem}.json — certification record for power-law modeling.
 
 Additive only. Does not affect pipeline success/failure, freeze, or diagnostics.
 """
@@ -24,8 +24,10 @@ _REQUIRED_COLUMNS = frozenset({
     "recurrence_count",
 })
 
-CLEANED_DATASET_FILENAME = "week2_cleaned_dataset.csv"
-CERTIFICATION_FILENAME = "week2_dataset_certification.json"
+from week2_validation.output_names import (
+    CLEANED_DATASET_FILENAME_PATTERN,
+    CERTIFICATION_FILENAME_PATTERN,
+)
 CERTIFICATION_VERSION = "1.0"
 
 
@@ -66,8 +68,8 @@ def write_approved_dataset(
 
     Behavior:
       - If validation_passed is False: return (None, None); no writes.
-      - If True: write week2_cleaned_dataset.csv (copy of frozen data, no modifications)
-                and week2_dataset_certification.json (exact structure as specified).
+      - If True: write validation_cleaned_dataset_{stem}.csv (copy of frozen data, no modifications)
+                and validation_dataset_certification_{stem}.json (exact structure as specified).
 
     Processing rules for CSV:
       - Do NOT modify values, drop rows, recalculate, reorder columns, or change dtypes.
@@ -101,9 +103,9 @@ def write_approved_dataset(
     if not frozen_dataset_path.is_file():
         return (None, None)
 
-    stem = dataset_stem if dataset_stem else "week2"
-    cleaned_name = f"week2_cleaned_dataset_{stem}.csv"
-    cert_name = f"week2_dataset_certification_{stem}.json"
+    stem = dataset_stem if dataset_stem else "default"
+    cleaned_name = CLEANED_DATASET_FILENAME_PATTERN.format(stem=stem)
+    cert_name = CERTIFICATION_FILENAME_PATTERN.format(stem=stem)
     csv_path = _resolve_output_path(output_dir, cleaned_name)
     cert_path = _resolve_output_path(output_dir, cert_name)
     if csv_path is None or cert_path is None:
@@ -122,7 +124,7 @@ def write_approved_dataset(
     try:
         fd, tmp_path = tempfile.mkstemp(
             suffix=".csv",
-            prefix=".week2_cleaned.",
+            prefix=".validation_cleaned.",
             dir=str(output_dir),
         )
         try:
@@ -160,7 +162,7 @@ def write_approved_dataset(
     try:
         fd, tmp_path = tempfile.mkstemp(
             suffix=".json",
-            prefix=".week2_cert.",
+            prefix=".validation_cert.",
             dir=str(output_dir),
         )
         try:

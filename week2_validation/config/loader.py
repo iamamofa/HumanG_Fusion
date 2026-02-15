@@ -125,6 +125,7 @@ class VisualizationConfig:
     allow_log_scale: bool           # Allow logarithmic scale plots
     allow_linear_scale: bool        # Allow linear scale plots
     save_real_data_plots: bool      # Allow saving plots of real data
+    dpi: int                       # DPI for publication-quality plots (e.g. 300)
 
 
 @dataclass(frozen=True)
@@ -159,7 +160,8 @@ class Week2Config:
     This is the main configuration object that contains all settings
     needed to run the pipeline. All fields are validated upon loading.
     """
-    # Top-level freeze state controls
+    # Top-level controls
+    demo_mode: bool                     # True = demo/reference data; False = production (can restrict analysis/plots)
     dataset_frozen_required: bool       # Whether dataset must be frozen
     allow_real_data_analysis: bool      # Whether real data analysis is allowed
     
@@ -455,6 +457,7 @@ def _parse_visualization(data: Dict[str, Any]) -> VisualizationConfig:
         allow_log_scale=_validate_bool(section.get("allow_log_scale"), "visualization.allow_log_scale"),
         allow_linear_scale=_validate_bool(section.get("allow_linear_scale"), "visualization.allow_linear_scale"),
         save_real_data_plots=_validate_bool(section.get("save_real_data_plots"), "visualization.save_real_data_plots"),
+        dpi=_validate_int(section.get("dpi", 300), "visualization.dpi", min_value=72),
     )
 
 
@@ -534,8 +537,14 @@ def load_config(config_path: Path) -> Week2Config:
     config = _validate_yaml_structure(raw_data)
     _validate_top_level_keys(config)
     
+    # demo_mode is optional; default False for backward compatibility
+    demo_mode_val = config.get("demo_mode", False)
+    if not isinstance(demo_mode_val, bool):
+        raise ConfigError(f"'demo_mode' must be a boolean, got {type(demo_mode_val).__name__}")
+
     # Parse and validate all sections, building the final config object
     return Week2Config(
+        demo_mode=demo_mode_val,
         dataset_frozen_required=_validate_bool(config.get("dataset_frozen_required"), "dataset_frozen_required"),
         allow_real_data_analysis=_validate_bool(config.get("allow_real_data_analysis"), "allow_real_data_analysis"),
         minimum_sample_size=_parse_minimum_sample_size(config),

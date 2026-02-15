@@ -1,8 +1,0 @@
-{
-  "source_path": "C:\\Users\\enchi\\Documents\\HumanG_Fusion\\week2_validation\\math_validation_audit\\synthetic_tests\\edge_case_single_row.csv",
-  "frozen_by": "week2_validation",
-  "frozen_at_utc": "2026-02-02T08:40:14.285236+00:00",
-  "file_hash_sha256": "9b40997b9c529efd641ee43656f27b9d6bca9ab23f927ef7f320a3280fee1936",
-  "week2_version": "0.1.0",
-  "original_filename": "edge_case_single_row.csv"
-}

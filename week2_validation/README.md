@@ -8,17 +8,20 @@
 
 ```bash
 # From project root (HumanG_Fusion/)
-python week2_validation/run_complete.py week2_validation/demo_fusion.csv demo_output
+# Provide your fusion data file path and output directory name
+python week2_validation/run_complete.py path/to/your_fusion_data.csv output_name
 ```
 
 This single command:
 - Runs all diagnostics (distribution, Benford, log-normality, COSMIC)
 - Generates comprehensive markdown report with visualizations
-- Executes full test suite (55 tests)
-- Outputs everything to `week2_validation/results/demo_output/`
+- Executes full test suite
+- Outputs everything to `week2_validation/results/output_name/`
+
+**Note:** No demo datasets are included. Provide your own fusion data file (CSV, TSV, JSON, Parquet, or XLSX). To generate sample data for testing, run `python week2_validation/scripts/generate_demo_files.py` from the project root.
 
 **Results include:**
-- Statistical_Integrity_Report_demo_fusion.md (narrative report)
+- Statistical_Integrity_Report_{stem}.md (narrative report; {stem} from input filename)
 - Bootstrap confidence intervals for Spearman correlation
 - Quality gate scoring with component breakdown
 - Reproducibility lock metadata
@@ -93,8 +96,7 @@ week2_validation/
 │   ├── diagnostics.py    # COSMIC rank-order diagnostic with bootstrap CI and reproducibility lock
 │   ├── statistical_controls.py   # Negative control correlation tests
 │   ├── quality_gate.py   # Validation scoring with transparent component breakdown
-│   ├── generate_mock_cosmic.py   # Mock COSMIC data generator
-│   ├── mock_cosmic_census.csv    # Fallback COSMIC reference (39 unique fusion pairs)
+│   ├── Cosmic_Fusion_v103_GRCh38.tsv  # Real COSMIC Fusion reference data
 │   ├── gene_alias_map.py   # Gene name normalization
 │   └── statistical_methodology.md   # Statistical methods documentation and assumptions
 │
@@ -138,7 +140,7 @@ week2_validation/
 | `frozen_inputs/` | Locked copies of your data (created automatically; you can delete to clear old snapshots) |
 | `run_complete.py` | Simplified runner for full pipeline execution + test suite |
 
-### Dependencies (`requirements.txt` / `requirements.lock.txt`)
+### Depend
 
 - **Required:** pandas, numpy, matplotlib, PyYAML (install these to run the pipeline)
 - **Optional:** scipy (for some statistics), openpyxl (for Excel files), pyarrow (for Parquet), psutil (for memory checks)
@@ -173,11 +175,6 @@ This section describes how to run the Data Integrity & Statistical Validation pi
 - **Required columns:** `fusion_id`, `gene_1`, `gene_2`, `protein_length`, `recurrence_count`
 - **Valid values:** `protein_length` > 0; `recurrence_count` >= 0; no nulls in required columns
 
-- Be in a supported format: CSV, TSV, JSON, Parquet, or Excel (.xlsx)
-- Include these required columns: `fusion_id`, `gene_1`, `gene_2`, `protein_length`, `recurrence_count`
-- Have `protein_length` > 0 and `recurrence_count` >= 0 for all rows
-- Have no nulls in required columns
-
 If your data uses Week 1 (Pipeline Execution & Data Generation) column names (`geneA`, `geneB`, `samples_detected` or `recurrence_frequency`), the pipeline adapts them automatically.
 
 ### How to Run
@@ -191,23 +188,23 @@ If your data uses Week 1 (Pipeline Execution & Data Generation) column names (`g
 2. **Run the pipeline** (from the main project folder, e.g. `HumanG_Fusion/`):
 
    ```bash
-   python -m week2_validation.run_week2 --fusion-data /path/to/your_fusion.csv --output-dir /path/to/outputs --run-diagnostics
+   python week2_validation/run_week2.py --fusion-data /path/to/your_fusion.csv --output-dir /path/to/outputs --run-diagnostics
    ```
 
    Replace `/path/to/your_fusion.csv` with your actual data file path, and `/path/to/outputs` with where you want the results saved.
 
    **Simplified runner** (runs full pipeline + tests, output automatically placed in `results/`):
    ```bash
-   python week2_validation/run_complete.py week2_validation/demo_fusion.csv demo_output
+   python week2_validation/run_complete.py path/to/your_fusion_data.csv output_name
    ```
-   Results are automatically saved to `week2_validation/results/demo_output/`.
+   Results are automatically saved to `week2_validation/results/output_name/`.
    
-   **Note:** All outputs from `run_complete.py` are placed inside `week2_validation/results/{output_name}/` by default.
+   **Note:** All outputs from `run_complete.py` are placed inside `week2_validation/results/{output_name}/` by default. Provide your own fusion data file path.
 
 3. **Optional extra checks** — You can add any of these flags:
    - `--run-benford` — First-digit pattern check (Benford’s Law)
    - `--run-lognormal` — Log-scale distribution check
-   - `--run-cosmic` — Compare with COSMIC database (add `--cosmic-data /path/to/cosmic.tsv` if you have it; uses mock fallback if not provided)
+   - `--run-cosmic` — Compare with COSMIC database (uses real COSMIC Fusion v103 GRCh38 by default; add `--cosmic-data /path/to/cosmic.tsv` to use custom COSMIC file)
    - `--run-all` — Run all diagnostics and generate narrative report (recommended)
    - `--generate-report` — Generate Statistical_Integrity_Report_*.md markdown report
    - `--dry-run` — Only check that files exist; do not run any analysis
@@ -352,13 +349,13 @@ If someone edits the original file while the pipeline runs, your results stay co
 When a user runs (from the project root, e.g. `HumanG_Fusion/`):
 
 ```bash
-python -m week2_validation.run_week2 --fusion-data <path/to/fusion.csv> --output-dir <path/to/output> [--run-diagnostics] [--run-benford] [--run-lognormal] [--run-cosmic] [--dry-run]
+python week2_validation/run_week2.py --fusion-data <path/to/fusion.csv> --output-dir <path/to/output> [--run-diagnostics] [--run-benford] [--run-lognormal] [--run-cosmic] [--dry-run]
 ```
 
 Example:
 
 ```bash
-python -m week2_validation.run_week2 --fusion-data ./my_fusion.csv --output-dir ./outputs --run-diagnostics
+python week2_validation/run_week2.py --fusion-data ./my_fusion.csv --output-dir ./outputs --run-diagnostics
 ```
 
 the following occurs in order:
@@ -478,11 +475,11 @@ The original file could be changed (e.g. overwritten) while the pipeline runs. T
 - **Reproducibility lock metadata** (Python/NumPy/SciPy/Pandas versions, random seeds, code version 1.1.0)
 - Gene name normalization and alias mapping for robust comparison
 
-**Required inputs:** `fusion_df` (must conform to fusion schema: `fusion_id`, `gene_1`, `gene_2`, `protein_length`, `recurrence_count`) and optionally `cosmic_df` with columns `gene_1`, `gene_2`, `recurrence_count`. Uses mock COSMIC fallback (39 unique fusion pairs) if user COSMIC not provided.
+**Required inputs:** `fusion_df` (must conform to fusion schema: `fusion_id`, `gene_1`, `gene_2`, `protein_length`, `recurrence_count`) and optionally `cosmic_df` with columns `gene_1`, `gene_2`, `recurrence_count`. Uses real COSMIC Fusion v103 GRCh38 by default (automatically loads `week2_validation/cosmic/Cosmic_Fusion_v103_GRCh38.tsv`). Pipeline transforms COSMIC Fusion format (FIVE_PRIME_GENE_SYMBOL, THREE_PRIME_GENE_SYMBOL) to standard format automatically.
 
 **Optional dependencies:** SciPy (for Spearman correlation, bootstrap CI, hypergeometric test; graceful degradation without it).
 
-**Real vs synthetic:** Used with real fusion data and optional COSMIC reference when `--run-cosmic` is set. Falls back to mock COSMIC (39 unique fusion pairs after normalization) if no user COSMIC provided.
+**Real vs synthetic:** Used with real fusion data and real COSMIC reference when `--run-cosmic` is set. Default COSMIC is real COSMIC Fusion v103 GRCh38 (`week2_validation/cosmic/Cosmic_Fusion_v103_GRCh38.tsv`). Pipeline will fail if COSMIC cannot be loaded (no fallback to synthetic data).
 
 **Writes files:** No (results written to `week2_diagnostic_results_{stem}.json` by pipeline).
 
@@ -507,7 +504,7 @@ The original file could be changed (e.g. overwritten) while the pipeline runs. T
 - **Statistical methodology justification** (why Spearman, hypergeometric, bootstrap)
 - **Biological bias disclosure** (COSMIC sampling, detection, cohort biases)
 - **Reproducibility lock** (versions, seeds, code version)
-- **Mock vs real COSMIC compatibility statement** (synthetic data limitations)
+- **COSMIC reference data provenance** (version, source, file hash for reproducibility)
 
 **Required inputs (json_summary, when invoked):** `output_dir` (Path), `run_metadata` (dict), `diagnostic_results` (dict).
 
@@ -595,19 +592,20 @@ This layer does not produce formal "approved" outputs. It provides diagnostic in
   - **Negative control correlation** (shuffled baseline)
   - **Quality gate scoring** (0.0–1.0) with transparent component breakdown
   - Gene name normalization and alias mapping (case-insensitive, whitespace-trimmed)
-  - Mock COSMIC fallback (39 unique fusion pairs after normalization)
+  - Real COSMIC Fusion v103 GRCh38 reference data (default)
+  - Automatic format transformation (COSMIC Fusion TSV → standard format)
   - **Statistical methodology documentation** (`cosmic/statistical_methodology.md`)
   - **Reproducibility lock metadata** (Python 3.11.3, NumPy 2.2.6, SciPy 1.15.1, Pandas 2.2.3, code v1.1.0)
 - Reporting: `reporting/json_summary.py` (structured JSON output), `reporting/status_envelope.py` (status envelope), `reporting/approved_dataset_writer.py` (cleaned dataset and certification JSON), `reporting/narrative_generator.py` (markdown reports)
 - Runtime layer: `runtime/exit_codes.py`, `runtime/runtime_guard.py`, `runtime/safe_runner.py`
 - Simplified runner: `run_complete.py` for full pipeline + test execution (outputs to `week2_validation/results/` by default)
-- Comprehensive test suite (55 tests total):
+- Comprehensive test suite (117+ tests total):
   - Integration tests (`tests/test_week2_integration.py`) — freeze, schema, SciPy optional mode, data quality warnings
   - COSMIC validation tests (`tests/test_cosmic_validation.py`) — bootstrap CI, reproducibility lock, score breakdown, cross-format consistency, gene normalization
 
 ### Runnable
 
-- The pipeline runs via `python -m week2_validation.run_week2`
+- The pipeline runs via `python week2_validation/run_week2.py` (or `python -m week2_validation.run_week2` with PYTHONPATH set)
 - All diagnostic modules support lazy import; missing optional deps cause graceful degradation with notes.
 - Run integration tests via `python -m pytest week2_validation/tests/` (requires pytest).
 
@@ -651,7 +649,7 @@ The COSMIC validation module has been enhanced with comprehensive statistical me
   - Full diagnostic results and visualizations
   - Statistical method justifications
   - Biological bias disclosure
-  - Mock vs real COSMIC compatibility statements
+  - COSMIC reference data provenance and version information
 - **Visualization:** Dynamic skewness gauge plots for distribution assessment
 
 ### Test Coverage

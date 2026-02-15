@@ -14,6 +14,7 @@ class Week2ExitCode(IntEnum):
     SUCCESS = 0
     INPUT_SCHEMA_ERROR = 10
     FREEZE_ERROR = 20
+    QUALITY_GATE_REJECTED = 25  # One or more quality gates FAIL
     DIAGNOSTIC_RUNTIME_ERROR = 30
     CONFIG_ERROR = 40
     UNKNOWN_ERROR = 99

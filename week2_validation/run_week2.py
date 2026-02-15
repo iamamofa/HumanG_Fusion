@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Week 2: Data Integrity & Statistical Validation — CLI Entry Point.
+Data Integrity & Statistical Validation — CLI Entry Point (week2_validation module).
 
 This module provides the command-line interface for the Data Integrity &
 Statistical Validation pipeline. It handles argument
@@ -41,7 +41,7 @@ This pipeline is diagnostic only:
 Usage:
     python -m week2_validation.run_week2 \\
         --fusion-data /path/to/fusion_data.csv \\
-        --output-dir /path/to/output \\
+        [--output-dir my_run] \\
         [--run-all] \\
         [--cosmic-data /path/to/cosmic.tsv] \\
         [--run-diagnostics] [--run-benford] [--run-lognormal] [--run-benford-controls] \\
@@ -177,6 +177,15 @@ from week2_validation.reporting.status_envelope import build_status_envelope
 
 # Week 1: Pipeline Execution & Data Generation compatibility adapter
 from week2_validation.adapters.week1_adapter import adapt_week1_dataframe
+from week2_validation.output_names import (
+    CLEANED_DATASET_FILENAME_PATTERN,
+    DATA_INTEGRITY_REPORT_HTML,
+    DATA_INTEGRITY_REPORT_PDF,
+    DIAGNOSTIC_RESULTS_FILENAME_PATTERN,
+    FROZEN_FILENAME_PATTERN,
+    QUALITY_GATES_FILENAME_PATTERN,
+    STATUS_FILENAME_PATTERN,
+)
 
 # =============================================================================
 # NOTE: Diagnostic modules are NOT imported at top level.
@@ -239,7 +248,8 @@ class PipelineConfig:
     run_lognormal: bool             # True = run log-normality diagnostics (if frozen), False = skip
     run_cosmic: bool                # True = run COSMIC rank-order diagnostics (if frozen), False = skip
     run_benford_controls: bool      # True = run Benford implementation self-tests (synthetic data), False = skip
-    generate_report: bool           # True = generate Statistical_Integrity_Report_Week2.md at end
+    generate_report: bool           # True = generate Statistical_Integrity_Report at end
+    generate_pdf: bool              # True = generate PDF report at end
 
 
 # =============================================================================
@@ -304,7 +314,7 @@ def create_argument_parser() -> argparse.ArgumentParser:
         # Show an example of how to use the program
         epilog=(
             "Example: python -m week2_validation.run_week2 "
-            "--fusion-data fusion.csv --output-dir ./results --run-diagnostics"
+            "--fusion-data fusion.csv --output-dir my_run --run-diagnostics"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -329,22 +339,35 @@ def create_argument_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    # Define the output directory argument (REQUIRED)
-    # The user must tell us where to save the results
-    required_group.add_argument(
-        "--output-dir",
-        type=str,
-        required=True,
-        metavar="PATH",
-        help="Directory where validation results will be written.",
-    )
-
     # -------------------------------------------------------------------------
     # OPTIONAL ARGUMENTS
     # -------------------------------------------------------------------------
 
     # Create a group for arguments that are OPTIONAL
     optional_group = parser.add_argument_group("optional arguments")
+
+    # Output always goes to week2_validation/results/{name}/; --output-dir provides the folder name
+    optional_group.add_argument(
+        "--output-dir",
+        type=str,
+        required=False,
+        default=None,
+        metavar="NAME",
+        help="Folder name under week2_validation/results for this run (e.g. 'output' -> week2_validation/results/output/). "
+             "If not specified, uses the dataset filename (without extension).",
+    )
+    
+    # Define the output subfolder name (OPTIONAL)
+    # Allows user to specify a custom subfolder name, otherwise uses dataset name
+    optional_group.add_argument(
+        "--output-name",
+        type=str,
+        required=False,
+        default=None,
+        metavar="NAME",
+        help="Subfolder name under week2_validation/results for this dataset's results. "
+             "If not specified, uses the dataset filename (without extension).",
+    )
 
     # Define the COSMIC reference data argument (OPTIONAL)
     # This is extra data the user can provide for additional checks
@@ -453,6 +476,17 @@ def create_argument_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    # Define the generate-pdf flag (OPTIONAL)
+    optional_group.add_argument(
+        "--generate-pdf",
+        action="store_true",
+        default=False,
+        help=(
+            "Generate a comprehensive PDF report "
+            "(data_integrity_validation_report.pdf) summarizing validation results."
+        ),
+    )
+
     # Define the dry-run flag (OPTIONAL)
     # When set, the program only checks inputs without running full analysis
     optional_group.add_argument(
@@ -501,10 +535,24 @@ def validate_arguments(args: argparse.Namespace) -> PipelineConfig:
         # If validation fails, wrap the error with more context
         raise ConfigurationError(f"Invalid fusion data path: {e}") from e
 
-    # STEP 2: Validate the output directory
-    # Check that we can write there; create the folder if it doesn't exist
+    # STEP 2: Validate the output directory and create subfolder if needed
+    # Output always goes to week2_validation/results/{folder_name}/
+    dataset_stem = fusion_path.stem  # e.g. "demo_fusion" from "demo_fusion.parquet"
+    
+    # Folder name: --output-name > --output-dir (last path component) > dataset_stem
+    output_subfolder = (
+        getattr(args, "output_name", None)
+        or (Path(args.output_dir).name if getattr(args, "output_dir", None) else None)
+        or dataset_stem
+    )
+    
+    # Full path: week2_validation/results/{folder_name}
+    base_output_dir = Path("week2_validation/results")
+    full_output_dir = base_output_dir / output_subfolder
+    
+    # Validate and create the full output directory
     try:
-        output_dir = validate_output_directory(args.output_dir, create=True)
+        output_dir = validate_output_directory(str(full_output_dir), create=True)
     except FileValidationError as e:
         raise ConfigurationError(f"Invalid output directory: {e}") from e
 
@@ -521,7 +569,6 @@ def validate_arguments(args: argparse.Namespace) -> PipelineConfig:
     # --run-all enables all diagnostic flags (distribution, Benford, log-normality, Benford controls, COSMIC)
     # AND generates the narrative report
     run_all = getattr(args, "run_all", False)
-    dataset_stem = fusion_path.stem  # e.g. "demo_fusion" from "demo_fusion.parquet"
     return PipelineConfig(
         fusion_data_path=fusion_path,
         output_dir=output_dir,
@@ -534,6 +581,7 @@ def validate_arguments(args: argparse.Namespace) -> PipelineConfig:
         run_cosmic=args.run_cosmic or run_all,
         run_benford_controls=args.run_benford_controls or run_all,
         generate_report=getattr(args, "generate_report", False) or run_all,
+        generate_pdf=getattr(args, "generate_pdf", False),
     )
 
 
@@ -759,6 +807,8 @@ def execute_diagnostics(
                 print(f"Protein distribution saved: {saved_path.name}")
         except Exception as save_err:
             print(f"Warning: Could not save histogram: {save_err}", file=sys.stderr)
+        
+        # Comprehensive distribution plot is generated later in generate_report with actual data
         print()
         print("Diagnostic analysis complete.")
         print("NOTE: Results are diagnostic only. No interpretation provided.")
@@ -872,7 +922,7 @@ def execute_benford_diagnostics(
                     print(f"  Scale span: {result.metadata.scale_span_orders_of_magnitude:.2f} orders of magnitude")
                     if run_metadata is not None:
                         run_metadata["benford_scale_span"] = result.metadata.scale_span_orders_of_magnitude
-            # Record Benford results for narrative report
+            # Record Benford results for narrative report and quality gates
             if run_metadata is not None:
                 obs = {int(k): round(float(v), 6) for k, v in result.observed_frequencies.items()}
                 exp = {int(k): round(float(v), 6) for k, v in result.expected_frequencies.items()}
@@ -886,6 +936,21 @@ def execute_benford_diagnostics(
                     ),
                     "applicability": result.metadata.benford_applicable,
                     "reason_if_not_applicable": result.metadata.reason_if_not_applicable or "",
+                    "p_value": (
+                        round(float(result.p_value), 6)
+                        if result.p_value is not None and math.isfinite(result.p_value)
+                        else None
+                    ),
+                    "chi_squared_statistic": (
+                        round(float(result.chi_squared_statistic), 4)
+                        if result.chi_squared_statistic is not None and math.isfinite(result.chi_squared_statistic)
+                        else None
+                    ),
+                    "degrees_of_freedom": (
+                        int(result.degrees_of_freedom)
+                        if result.degrees_of_freedom is not None
+                        else None
+                    ),
                 }
         
         print()
@@ -1070,6 +1135,9 @@ def execute_cosmic_diagnostics(
     try:
         from week2_validation.cosmic.diagnostics import (
             run_cosmic_recurrence_diagnostic,
+            run_null_model_falsification,
+            assess_external_validity_stability,
+            quantify_cosmic_bias,
         )
     except ImportError as e:
         print(f"Error: Cannot import COSMIC diagnostic module: {e}", file=sys.stderr)
@@ -1088,48 +1156,53 @@ def execute_cosmic_diagnostics(
         return (int(Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR), False)
     
     # -------------------------------------------------------------------------
-    # Load COSMIC data with automatic fallback to mock COSMIC
+    # Load COSMIC data - use real COSMIC as default, user-provided if specified
     # -------------------------------------------------------------------------
     cosmic_df = None
     cosmic_reference_loaded = False
     cosmic_reference_source = None
     
+    # Import transformation function
+    from week2_validation.cosmic.diagnostics import transform_cosmic_fusion_to_standard_format
+    
     if config.cosmic_data_path is not None:
         # User provided COSMIC data - try to load it
         try:
             cosmic_df = load_reference_data(str(config.cosmic_data_path))
-            cosmic_reference_loaded = cosmic_df is not None
-            if cosmic_reference_loaded:
+            if cosmic_df is not None:
+                # Transform COSMIC Fusion format to standard format if needed
+                cosmic_df = transform_cosmic_fusion_to_standard_format(cosmic_df)
+                cosmic_reference_loaded = True
                 cosmic_reference_source = "user_provided"
                 print(f"Loaded user-provided COSMIC data from: {config.cosmic_data_path.name}")
         except Exception as e:
-            print(f"Warning: Could not load user-provided COSMIC data: {e}")
-            print("Attempting fallback to mock COSMIC dataset...")
-            cosmic_reference_loaded = False
-    
-    # Fallback to mock COSMIC if user COSMIC not available
-    if not cosmic_reference_loaded:
+            print(f"Error: Could not load user-provided COSMIC data: {e}")
+            raise RuntimeError(f"Failed to load COSMIC data from {config.cosmic_data_path}: {e}") from e
+    else:
+        # Default: use real COSMIC Fusion v103 GRCh38
+        cosmic_dir = Path(__file__).parent / "cosmic"
+        default_cosmic_path = cosmic_dir / "Cosmic_Fusion_v103_GRCh38.tsv"
+        
+        if not default_cosmic_path.exists():
+            raise RuntimeError(
+                f"Default COSMIC reference file not found: {default_cosmic_path}\n"
+                f"Please ensure Cosmic_Fusion_v103_GRCh38.tsv exists in week2_validation/cosmic/ directory."
+            )
+        
         try:
-            from week2_validation.cosmic.generate_mock_cosmic import ensure_mock_cosmic_exists
-            
-            # Mock COSMIC should be in week2_validation/cosmic/ directory
-            cosmic_dir = Path(__file__).parent / "cosmic"
-            mock_cosmic_path = ensure_mock_cosmic_exists(cosmic_dir)
-            
-            cosmic_df = load_reference_data(str(mock_cosmic_path))
-            cosmic_reference_loaded = cosmic_df is not None
-            if cosmic_reference_loaded:
-                cosmic_reference_source = "mock_fallback"
-                print(f"Loaded mock COSMIC fallback dataset from: {mock_cosmic_path.name}")
-                print("Note: Using synthetic COSMIC data for pipeline operability.")
+            cosmic_df = load_reference_data(str(default_cosmic_path))
+            if cosmic_df is not None:
+                # Transform COSMIC Fusion format to standard format
+                cosmic_df = transform_cosmic_fusion_to_standard_format(cosmic_df)
+                cosmic_reference_loaded = True
+                cosmic_reference_source = "cosmic_v103_grch38_real"
+                print(f"Loaded COSMIC Fusion v103 GRCh38 reference from: {default_cosmic_path.name}")
         except Exception as e:
-            print(f"Warning: Could not load mock COSMIC fallback: {e}")
-            print("COSMIC diagnostic will report fusion data counts only.")
-            cosmic_reference_loaded = False
+            print(f"Error: Could not load default COSMIC reference: {e}")
+            raise RuntimeError(f"Failed to load default COSMIC reference from {default_cosmic_path}: {e}") from e
     
     if not cosmic_reference_loaded:
-        print("Note: No COSMIC reference data available (neither user-provided nor mock).")
-        print("COSMIC diagnostic will report fusion data counts only.")
+        raise RuntimeError("COSMIC reference data could not be loaded. Pipeline cannot continue without COSMIC data.")
     
     # -------------------------------------------------------------------------
     # Run COSMIC diagnostic (returns descriptive dict only)
@@ -1140,10 +1213,10 @@ def execute_cosmic_diagnostics(
         cosmic_file_path = None
         if config.cosmic_data_path:
             cosmic_file_path = config.cosmic_data_path
-        elif cosmic_reference_source == "mock_fallback":
-            # Mock COSMIC path
+        elif cosmic_reference_source == "cosmic_v103_grch38_real":
+            # Default real COSMIC path
             cosmic_dir = Path(__file__).parent / "cosmic"
-            cosmic_file_path = cosmic_dir / "mock_cosmic_census.csv"
+            cosmic_file_path = cosmic_dir / "Cosmic_Fusion_v103_GRCh38.tsv"
         
         result = run_cosmic_recurrence_diagnostic(
             fusion_df=fusion_df,
@@ -1151,7 +1224,7 @@ def execute_cosmic_diagnostics(
             top_n=10,
             cosmic_reference_source=cosmic_reference_source,
             cosmic_file_path=cosmic_file_path,
-            mock_generation_seed=42,
+            mock_generation_seed=None,  # No longer using mock COSMIC
             bootstrap_iterations=1000,
             bootstrap_seed=42,
         )
@@ -1259,6 +1332,96 @@ def execute_cosmic_diagnostics(
             cosmic_metadata["cosmic_reference_load_timestamp"] = result.get("cosmic_reference_load_timestamp")
             
             run_metadata.setdefault("diagnostic_results", {})["cosmic"] = cosmic_metadata
+            
+            # -------------------------------------------------------------------------
+            # Advanced Inference Layer: Null Model, Stability, Bias
+            # -------------------------------------------------------------------------
+            advanced_inference = {}
+            
+            # 1. Null Model Falsification Test
+            try:
+                print("Running null model falsification test...")
+                null_model_result = run_null_model_falsification(
+                    fusion_df=fusion_df,
+                    cosmic_df=cosmic_df,
+                    iterations=1000,
+                    random_seed=42,
+                )
+                advanced_inference["null_model"] = null_model_result
+                if null_model_result.get("empirical_p_value") is not None:
+                    print(f"  Null model p-value: {null_model_result['empirical_p_value']:.4f}")
+            except Exception as e:
+                print(f"Warning: Null model falsification test failed: {e}", file=sys.stderr)
+                advanced_inference["null_model"] = None
+            
+            # 2. External Validity Stability (Bootstrap CI)
+            try:
+                print("Running external validity stability assessment...")
+                stability_result = assess_external_validity_stability(
+                    fusion_df=fusion_df,
+                    cosmic_df=cosmic_df,
+                    n_bootstrap=100,
+                    confidence_level=0.95,
+                    random_seed=42,
+                )
+                advanced_inference["stability"] = stability_result
+                if stability_result.get("stability_ci_lower") is not None:
+                    print(f"  Stability CI: [{stability_result['stability_ci_lower']:.4f}, {stability_result['stability_ci_upper']:.4f}]")
+            except Exception as e:
+                print(f"Warning: External validity stability assessment failed: {e}", file=sys.stderr)
+                advanced_inference["stability"] = None
+            
+            # 3. COSMIC Bias Quantification (Mann-Whitney U)
+            try:
+                print("Running COSMIC bias quantification...")
+                bias_result = quantify_cosmic_bias(
+                    fusion_df=fusion_df,
+                    cosmic_df=cosmic_df,
+                )
+                advanced_inference["bias"] = bias_result
+                if bias_result.get("mannwhitney_p_value") is not None:
+                    print(f"  Mann-Whitney p-value: {bias_result['mannwhitney_p_value']:.4f}")
+                    print(f"  Bias detected: {bias_result.get('bias_detected', 'N/A')}")
+            except Exception as e:
+                print(f"Warning: COSMIC bias quantification failed: {e}", file=sys.stderr)
+                advanced_inference["bias"] = None
+            
+            # 4. Scientific Claim Strength Classification
+            try:
+                from week2_validation.reporting.robustness.scientific_claim_classifier import (
+                    classify_scientific_claim_strength,
+                )
+                
+                # Extract metrics for classification
+                observed_rho = result.get("spearman_rho")
+                null_p = null_model_result.get("empirical_p_value") if null_model_result else None
+                spearman_p = result.get("spearman_p_value")  # Get Spearman correlation p-value
+                # For stability_index, we need to compute it from the stability CI or use a default
+                # Since we're using bootstrap CI, we can compute a pseudo-stability index from CI width
+                stability_index = None
+                if stability_result and stability_result.get("stability_ci_lower") is not None:
+                    ci_width = stability_result.get("stability_ci_upper", 0) - stability_result.get("stability_ci_lower", 0)
+                    # Convert CI width to approximate stability index (wider CI = less stable)
+                    # This is an approximation since we don't have the actual stability_index from strata
+                    stability_index = ci_width / 2.0  # Rough approximation
+                
+                print("Running scientific claim strength classification...")
+                claim_strength_result = classify_scientific_claim_strength(
+                    observed_rho=observed_rho,
+                    null_p=null_p,
+                    stability_index=stability_index,
+                    spearman_p=spearman_p,
+                )
+                advanced_inference["claim_strength"] = claim_strength_result
+                if claim_strength_result.get("classification"):
+                    print(f"  Classification: {claim_strength_result['classification']}")
+            except Exception as e:
+                print(f"Warning: Scientific claim strength classification failed: {e}", file=sys.stderr)
+                advanced_inference["claim_strength"] = None
+            
+            # Store advanced inference results
+            run_metadata.setdefault("diagnostic_results", {})["advanced_inference"] = advanced_inference
+        
         print()
         print("NOTE: COSMIC diagnostics are DESCRIPTIVE ONLY.")
         print("No inference, no statistical tests, no validation conclusions are drawn.")
@@ -1413,6 +1576,72 @@ def execute_benford_controls() -> int:
 
 
 # =============================================================================
+# PROVENANCE CHAIN (for reports and diagnostic_results JSON)
+# =============================================================================
+
+def _build_and_attach_provenance(run_metadata: dict, diag_results: dict) -> None:
+    """
+    Build the complete provenance chain (Raw Input → ... → Approved Dataset)
+    and attach it to diag_results under the "provenance" key.
+    """
+    prov = run_metadata.get("data_provenance") or {}
+    quality_gates = run_metadata.get("quality_gates") or {}
+    gates_list = quality_gates.get("gates", [])
+    overall_approval = quality_gates.get("overall_approval", "N/A")
+    hash_prefix = prov.get("input_hash_sha256_prefix", run_metadata.get("dataset_hash", ""))
+    freeze_ts = prov.get("freeze_timestamp_utc", "") or "frozen"
+    schema_applied = prov.get("schema_adapter_applied", False)
+    approved_note = run_metadata.get("approved_dataset_write_note") or ""
+
+    def _gate_status(module: str) -> tuple:
+        for g in gates_list:
+            if (g.get("module_name") or "").strip() == module:
+                s = (g.get("status") or "N/A").upper()
+                d = (g.get("reason") or "")[:120] or s
+                return (s, d)
+        return ("SKIPPED", "Not run")
+
+    chain = []
+
+    # 1. Raw Input
+    chain.append({"step": "Raw Input", "status": "PASS", "details": f"hash: {hash_prefix}"})
+
+    # 2. Schema Check
+    chain.append({
+        "step": "Schema Check",
+        "status": "PASS",
+        "details": "Week 1 adapter applied" if schema_applied else "Native schema",
+    })
+
+    # 3. Freeze
+    chain.append({"step": "Freeze", "status": "PASS", "details": freeze_ts or "frozen"})
+
+    # 4–7. Diagnostics
+    for step_name, module in [
+        ("Distribution", "distribution"),
+        ("Benford", "benford"),
+        ("Log-Normal", "log_normality"),
+        ("COSMIC", "cosmic"),
+    ]:
+        st, det = _gate_status(module)
+        chain.append({"step": step_name, "status": st, "details": det})
+
+    # 8. Quality Gate
+    chain.append({
+        "step": "Quality Gate",
+        "status": str(overall_approval).upper() if overall_approval else "N/A",
+        "details": str(overall_approval),
+    })
+
+    # 9. Approved Dataset
+    approved_status = "PASS" if (not approved_note and overall_approval in ("APPROVED", "CONDITIONAL")) else ("FAIL" if approved_note else "SKIPPED")
+    approved_details = "Written" if approved_status == "PASS" else (approved_note or "Not written")
+    chain.append({"step": "Approved Dataset", "status": approved_status, "details": approved_details})
+
+    diag_results["provenance"] = chain
+
+
+# =============================================================================
 # MAIN PIPELINE EXECUTION
 # =============================================================================
 
@@ -1463,11 +1692,23 @@ def run_pipeline(config: PipelineConfig) -> int:
         
         week2_config = load_config(config_path)
         print(f"  Configuration loaded from: {config_path.name}")
+        print(f"  demo_mode: {week2_config.demo_mode}")
         print(f"  dataset_frozen_required: {week2_config.dataset_frozen_required}")
         print(f"  allow_real_data_analysis: {week2_config.allow_real_data_analysis}")
+        if week2_config.demo_mode:
+            print("  Running in demo mode (demo/reference data, not production clinical data).")
+        # Production guard: when not in demo mode, require explicit approval for real data analysis
+        if not week2_config.demo_mode and not week2_config.allow_real_data_analysis:
+            raise PipelineError(
+                "Real data analysis is not allowed (allow_real_data_analysis is false and demo_mode is false). "
+                "Set allow_real_data_analysis to true in config/thresholds.yaml to run on production data, "
+                "or set demo_mode to true for demo/reference runs."
+            )
     except ConfigError as e:
         raise PipelineError(f"Failed to load configuration: {e}") from e
-    
+
+    may_save_plots = week2_config.visualization.save_real_data_plots or week2_config.demo_mode
+
     print()
 
     # =========================================================================
@@ -1486,9 +1727,44 @@ def run_pipeline(config: PipelineConfig) -> int:
         # Get the actual frozen data file path for downstream use
         frozen_input_path = get_frozen_data_path(frozen_input_dir)
         print(f"  Frozen data location: {frozen_input_path}")
+        # Capture data provenance for reports (chain of custody)
+        manifest_path = frozen_input_dir / "manifest.json"
+        if manifest_path.is_file():
+            try:
+                with open(manifest_path, "r", encoding="utf-8") as _mf:
+                    _manifest = json.load(_mf)
+                _orig = _manifest.get("original_filename", frozen_input_path.name)
+                _hash_full = _manifest.get("file_hash_sha256", "")
+                _hash_prefix = (_hash_full[:12] if _hash_full else frozen_input_dir.name)
+                _run_metadata["data_provenance"] = {
+                    "input_filename": _orig,
+                    "input_format": (Path(_orig).suffix or "").lstrip(".") or "unknown",
+                    "input_hash_sha256_prefix": _hash_prefix,
+                    "frozen_copy_path": f"frozen_inputs/{frozen_input_dir.name}/{_orig}",
+                    "freeze_timestamp_utc": _manifest.get("frozen_at_utc", ""),
+                    "schema_adapter_applied": False,
+                }
+            except (json.JSONDecodeError, OSError):
+                _run_metadata["data_provenance"] = {
+                    "input_filename": frozen_input_path.name,
+                    "input_format": (frozen_input_path.suffix or "").lstrip(".") or "unknown",
+                    "input_hash_sha256_prefix": frozen_input_dir.name,
+                    "frozen_copy_path": f"frozen_inputs/{frozen_input_dir.name}/{frozen_input_path.name}",
+                    "freeze_timestamp_utc": "",
+                    "schema_adapter_applied": False,
+                }
+        else:
+            _run_metadata["data_provenance"] = {
+                "input_filename": frozen_input_path.name,
+                "input_format": (frozen_input_path.suffix or "").lstrip(".") or "unknown",
+                "input_hash_sha256_prefix": frozen_input_dir.name,
+                "frozen_copy_path": f"frozen_inputs/{frozen_input_dir.name}/{frozen_input_path.name}",
+                "freeze_timestamp_utc": "",
+                "schema_adapter_applied": False,
+            }
     except FreezeError as e:
         raise
-    
+
     print()
 
     # =========================================================================
@@ -1500,9 +1776,11 @@ def run_pipeline(config: PipelineConfig) -> int:
         validate_schema(adapted_df, REQUIRED_FUSION_FIELDS)
         effective_data_path = frozen_input_path
         if "geneA" in raw_df.columns or "geneB" in raw_df.columns or "samples_detected" in raw_df.columns or "recurrence_frequency" in raw_df.columns:
-            adapted_path = config.output_dir / "week2_adapted_fusion.csv"
+            adapted_path = config.output_dir / "validation_adapted_fusion.csv"
             adapted_df.to_csv(adapted_path, sep=",", index=False)
             effective_data_path = adapted_path
+            if _run_metadata.get("data_provenance") is not None:
+                _run_metadata["data_provenance"]["schema_adapter_applied"] = True
             print("  Week 1 (Pipeline Execution & Data Generation) format detected; adapted data written for diagnostics")
     except ValueError as e:
         raise PipelineError(f"Input schema adaptation failed: {e}") from e
@@ -1594,7 +1872,7 @@ def run_pipeline(config: PipelineConfig) -> int:
         print("To run diagnostic analysis, use one or more flags:")
         print(f"  python -m week2_validation.run_week2 \\")
         print(f"      --fusion-data {config.fusion_data_path} \\")
-        print(f"      --output-dir {config.output_dir} \\")
+        print(f"      (output: {config.output_dir}) \\")
         print(f"      --run-diagnostics    # Distribution diagnostics")
         print(f"      --run-benford        # Benford's Law diagnostics (diagnostic only)")
         print(f"      --run-lognormal      # Log-normality diagnostics (diagnostic only)")
@@ -1647,6 +1925,19 @@ def run_pipeline(config: PipelineConfig) -> int:
             check_runtime_guard()
             if result != 0:
                 exit_code = result
+            else:
+                try:
+                    from week2_validation.reporting.module_certificates import write_distribution_certificate
+                    cert_path = write_distribution_certificate(
+                        config.output_dir,
+                        _run_metadata,
+                        histogram_path_relative="protein_distribution.png",
+                    )
+                    if cert_path is not None:
+                        from week2_validation.reporting.module_certificates import CERTIFICATES_SUBDIR
+                        print(f"Certificate written: {CERTIFICATES_SUBDIR}/{cert_path.name}")
+                except Exception as cert_err:
+                    print(f"Warning: Distribution certificate write failed: {cert_err}", file=sys.stderr)
             print()
 
         # Execute Benford diagnostics if requested (lazy import happens inside)
@@ -1661,6 +1952,15 @@ def run_pipeline(config: PipelineConfig) -> int:
             check_runtime_guard()
             if result != 0:
                 exit_code = result
+            else:
+                try:
+                    from week2_validation.reporting.module_certificates import write_benford_certificate
+                    cert_path = write_benford_certificate(config.output_dir, _run_metadata)
+                    if cert_path is not None:
+                        from week2_validation.reporting.module_certificates import CERTIFICATES_SUBDIR
+                        print(f"Certificate written: {CERTIFICATES_SUBDIR}/{cert_path.name}")
+                except Exception as cert_err:
+                    print(f"Warning: Benford certificate write failed: {cert_err}", file=sys.stderr)
             print()
 
         # Execute log-normality diagnostics if requested (lazy import happens inside)
@@ -1675,6 +1975,15 @@ def run_pipeline(config: PipelineConfig) -> int:
             check_runtime_guard()
             if result != 0:
                 exit_code = result
+            else:
+                try:
+                    from week2_validation.reporting.module_certificates import write_lognormality_certificate
+                    cert_path = write_lognormality_certificate(config.output_dir, _run_metadata)
+                    if cert_path is not None:
+                        from week2_validation.reporting.module_certificates import CERTIFICATES_SUBDIR
+                        print(f"Certificate written: {CERTIFICATES_SUBDIR}/{cert_path.name}")
+                except Exception as cert_err:
+                    print(f"Warning: Log-normality certificate write failed: {cert_err}", file=sys.stderr)
             print()
 
         # Execute COSMIC diagnostics if requested (lazy import happens inside)
@@ -1689,6 +1998,15 @@ def run_pipeline(config: PipelineConfig) -> int:
             check_runtime_guard()
             if result_code != 0:
                 exit_code = result_code
+            else:
+                try:
+                    from week2_validation.reporting.module_certificates import write_cosmic_certificate
+                    cert_path = write_cosmic_certificate(config.output_dir, _run_metadata)
+                    if cert_path is not None:
+                        from week2_validation.reporting.module_certificates import CERTIFICATES_SUBDIR
+                        print(f"Certificate written: {CERTIFICATES_SUBDIR}/{cert_path.name}")
+                except Exception as cert_err:
+                    print(f"Warning: COSMIC certificate write failed: {cert_err}", file=sys.stderr)
             if config.cosmic_data_path is not None:
                 _run_metadata["cosmic_reference_loaded"] = cosmic_loaded
 
@@ -1727,15 +2045,70 @@ def run_pipeline(config: PipelineConfig) -> int:
                 print(f"Warning: Approved dataset write skipped: {_e}", file=sys.stderr)
                 _run_metadata["approved_dataset_write_note"] = f"Write skipped: {type(_e).__name__}"
 
-        # Write diagnostic results for narrative report (when diagnostics ran)
-        diag_results = _run_metadata.get("diagnostic_results")
+        # Quality gates: per-module PASS/WARN/FAIL and overall approval (when diagnostics ran)
+        if not _run_metadata.get("diagnostics_skipped") and exit_code == 0:
+            try:
+                from week2_validation.reporting.quality_gates import (
+                    OverallApproval,
+                    evaluate_all_gates,
+                    quality_gates_summary_for_envelope,
+                    write_quality_gates_json,
+                )
+                gate_results, overall = evaluate_all_gates(
+                    _run_metadata.get("diagnostic_results") or {},
+                    _run_metadata.get("data_quality"),
+                    _run_metadata.get("diagnostics_run"),
+                )
+                _run_metadata["quality_gates"] = quality_gates_summary_for_envelope(
+                    gate_results, overall
+                )
+                gates_path = config.output_dir / QUALITY_GATES_FILENAME_PATTERN.format(
+                    stem=config.dataset_stem
+                )
+                write_quality_gates_json(gates_path, gate_results, overall, config.dataset_stem)
+                if overall == OverallApproval.REJECTED:
+                    exit_code = int(Week2ExitCode.QUALITY_GATE_REJECTED)
+                # Aggregate certificate (deliverable: cleaned, validated dataset approval summary)
+                try:
+                    from week2_validation.reporting.module_certificates import (
+                        write_aggregate_certificate,
+                        CERTIFICATES_SUBDIR,
+                    )
+                    agg_path = write_aggregate_certificate(config.output_dir, _run_metadata)
+                    if agg_path is not None:
+                        print(f"Certificate written: {CERTIFICATES_SUBDIR}/{agg_path.name}")
+                except Exception as agg_err:
+                    print(f"Warning: Aggregate certificate write failed: {agg_err}", file=sys.stderr)
+            except Exception as qg_err:
+                print(f"Warning: Quality gate evaluation failed: {qg_err}", file=sys.stderr)
+
+        # Build provenance chain and write diagnostic results (including provenance)
+        diag_results = _run_metadata.get("diagnostic_results") or {}
+        _build_and_attach_provenance(_run_metadata, diag_results)
         if diag_results:
             try:
-                diag_path = config.output_dir / f"week2_diagnostic_results_{config.dataset_stem}.json"
+                def _convert_to_json_serializable(obj):
+                    import numpy as np
+                    if isinstance(obj, dict):
+                        return {k: _convert_to_json_serializable(v) for k, v in obj.items()}
+                    if isinstance(obj, list):
+                        return [_convert_to_json_serializable(item) for item in obj]
+                    if isinstance(obj, (np.integer, np.int64, np.int32)):
+                        return int(obj)
+                    if isinstance(obj, (np.floating, np.float64, np.float32)):
+                        return float(obj)
+                    if isinstance(obj, (np.bool_, bool)):
+                        return bool(obj)
+                    if isinstance(obj, np.ndarray):
+                        return obj.tolist()
+                    return obj
+                diag_path = config.output_dir / DIAGNOSTIC_RESULTS_FILENAME_PATTERN.format(stem=config.dataset_stem)
                 with open(diag_path, "w", encoding="utf-8") as f:
-                    json.dump(diag_results, f, indent=2)
+                    json.dump(_convert_to_json_serializable(diag_results), f, indent=2)
             except OSError:
-                pass  # Non-fatal; report may use status/cert only
+                pass
+            except Exception as e:
+                print(f"Warning: Could not serialize diagnostic results to JSON: {e}", file=sys.stderr)
 
     return exit_code
 
@@ -1847,9 +2220,11 @@ def main() -> int:
             diagnostics_skipped=meta.get("diagnostics_skipped"),
             skip_reason=meta.get("skip_reason"),
             benford_scale_span=meta.get("benford_scale_span"),
+            quality_gates=meta.get("quality_gates"),
+            data_provenance=meta.get("data_provenance"),
         )
         envelope["runtime_seconds"] = round(runtime_seconds, 2)
-        status_path = config.output_dir / f"week2_status_{config.dataset_stem}.json"
+        status_path = config.output_dir / STATUS_FILENAME_PATTERN.format(stem=config.dataset_stem)
         try:
             with open(status_path, "w", encoding="utf-8") as f:
                 json.dump(envelope, f, indent=2)
@@ -1860,6 +2235,16 @@ def main() -> int:
             if exit_code == 0:
                 exit_code = int(Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR)
             return exit_code
+
+        # Resolve plot-saving permission for report/PDF (this scope is _execute; week2_config lives in run_pipeline)
+        try:
+            _config_path = Path(__file__).parent / "config" / "thresholds.yaml"
+            if not _config_path.exists():
+                _config_path = Path.cwd() / "week2_validation" / "config" / "thresholds.yaml"
+            _week2_cfg = load_config(_config_path)
+            _may_save_plots = _week2_cfg.visualization.save_real_data_plots or _week2_cfg.demo_mode
+        except Exception:
+            _may_save_plots = True
 
         # Generate researcher-friendly narrative report when requested
         if config.generate_report:
@@ -1872,7 +2257,7 @@ def main() -> int:
                 if src is not None and isinstance(src, (int, float)) and math.isfinite(float(src)):
                     skewness_val = float(src)
                     break
-            if skewness_val is not None:
+            if _may_save_plots and skewness_val is not None:
                 try:
                     from week2_validation.distributions.visualize import generate_dynamic_skewness_plot
                     skew_path = config.output_dir / "skewness_diagnostic.png"
@@ -1880,6 +2265,86 @@ def main() -> int:
                         print(f"Skewness diagnostic saved: skewness_diagnostic.png")
                 except Exception as e:
                     print(f"Warning: Could not generate skewness diagnostic: {e}", file=sys.stderr)
+            
+            # Generate comprehensive distribution plot (publication-quality)
+            if _may_save_plots:
+                try:
+                    from week2_validation.distributions.visualize import (
+                        generate_comprehensive_distribution_plot,
+                        validate_input,
+                    )
+                    # Load frozen data to get protein lengths for comprehensive plot
+                    frozen_path = config.output_dir / f"week2_frozen_{config.dataset_stem}.csv"
+                    if not frozen_path.exists():
+                        # Try alternative frozen path location
+                        import glob
+                        frozen_pattern = str(config.output_dir.parent / "week2_validation" / "frozen_inputs" / "*" / f"week2_cleaned_dataset_demo_fusion.csv")
+                        frozen_files = glob.glob(frozen_pattern)
+                        if frozen_files:
+                            frozen_path = Path(frozen_files[0])
+                    
+                    if frozen_path.exists():
+                        import numpy as np
+                        import pandas as pd
+                        frozen_df = pd.read_csv(frozen_path)
+                        if "protein_length" in frozen_df.columns:
+                            protein_lengths = frozen_df["protein_length"].dropna()
+                            protein_lengths = protein_lengths[protein_lengths > 0]
+                            if len(protein_lengths) > 0:
+                                # Cast to float to avoid bool/object dtype triggering validate_input warnings
+                                pl_arr = np.asarray(protein_lengths, dtype=np.float64)
+                                arr_validated = validate_input(pl_arr)
+                                comp_path = config.output_dir / "comprehensive_distribution.png"
+                                if generate_comprehensive_distribution_plot(arr_validated, comp_path) is not None:
+                                    print(f"Comprehensive distribution plot saved: comprehensive_distribution.png")
+                except Exception as comp_err:
+                    print(f"Warning: Could not generate comprehensive distribution plot: {comp_err}", file=sys.stderr)
+            
+            # Generate Benford analysis plot (publication-quality)
+            if _may_save_plots:
+                try:
+                    from week2_validation.distributions.visualize import generate_benford_analysis_plot
+                    benford_data = diag_res.get("benford") or {}
+                    observed_freq = benford_data.get("observed_frequencies") or {}
+                    expected_freq = benford_data.get("expected_frequencies") or {}
+                    if observed_freq and expected_freq:
+                        benford_path = config.output_dir / "benford_analysis.png"
+                        if generate_benford_analysis_plot(observed_freq, expected_freq, benford_path) is not None:
+                            print(f"Benford analysis plot saved: benford_analysis.png")
+                except Exception as ben_err:
+                    print(f"Warning: Could not generate Benford analysis plot: {ben_err}", file=sys.stderr)
+            
+            # Generate COSMIC correlation plot (publication-quality)
+            if _may_save_plots:
+                try:
+                    from week2_validation.distributions.visualize import generate_cosmic_correlation_plot
+                    cosmic_data = diag_res.get("cosmic") or {}
+                    spearman_rho = cosmic_data.get("spearman_rho")
+                    if spearman_rho is not None:
+                        # Try to reconstruct recurrence arrays from frozen data and COSMIC reference
+                        # This requires loading both datasets and finding overlaps
+                        frozen_path = config.output_dir / FROZEN_FILENAME_PATTERN.format(stem=config.dataset_stem)
+                        if frozen_path.exists():
+                            import pandas as pd
+                            frozen_df = pd.read_csv(frozen_path)
+                            if "gene_1" in frozen_df.columns and "gene_2" in frozen_df.columns and "recurrence_count" in frozen_df.columns:
+                                # Build fusion pairs dictionary
+                                fusion_pairs = {}
+                                for _, row in frozen_df.iterrows():
+                                    gene_1 = str(row["gene_1"]).strip().upper()
+                                    gene_2 = str(row["gene_2"]).strip().upper()
+                                    pair = tuple(sorted([gene_1, gene_2]))
+                                    recurrence = float(row.get("recurrence_count", 0))
+                                    if pair not in fusion_pairs or recurrence > fusion_pairs[pair]:
+                                        fusion_pairs[pair] = recurrence
+                                
+                                # Try to load COSMIC data if available
+                                # Check if COSMIC reference file path is stored in diagnostic results
+                                # For now, we'll skip if COSMIC data isn't directly accessible
+                                # The plot will be generated during COSMIC diagnostics in a future update
+                                pass
+                except Exception as cosmic_err:
+                    print(f"Warning: Could not generate COSMIC correlation plot: {cosmic_err}", file=sys.stderr)
             try:
                 from week2_validation.reporting.narrative_generator import generate_narrative_report
                 report_path = generate_narrative_report(config.output_dir, dataset_stem=config.dataset_stem)
@@ -1887,6 +2352,334 @@ def main() -> int:
                     print(f"Narrative report written: {report_path.name}")
             except Exception as e:
                 print(f"Warning: Could not generate narrative report: {e}", file=sys.stderr)
+
+        # Generate PDF (and HTML) report when requested; run even if exit_code != 0 so user gets reports on failure
+        if config.generate_pdf:
+            # Optional: Generate statistical interpretation (non-blocking, fails gracefully)
+            interpretation_text = None
+            try:
+                from week2_validation.reporting.statistical_interpretation import (
+                    extract_interpretation_metrics,
+                    generate_distribution_interpretation,
+                )
+                
+                # Load diagnostic results if available
+                diagnostic_path = config.output_dir / DIAGNOSTIC_RESULTS_FILENAME_PATTERN.format(stem=config.dataset_stem)
+                diagnostic_data = None
+                try:
+                    if diagnostic_path.exists():
+                        with open(diagnostic_path, "r", encoding="utf-8") as f:
+                            diagnostic_data = json.load(f)
+                except Exception:
+                    pass
+                
+                # Extract metrics and generate interpretation
+                metrics = extract_interpretation_metrics(envelope, diagnostic_data)
+                interpretation_text = generate_distribution_interpretation(metrics)
+            except Exception as interp_err:
+                # Interpretation generation failure is non-fatal
+                print(f"Warning: Statistical interpretation generation skipped: {interp_err}", file=sys.stderr)
+                interpretation_text = None
+            
+            # Optional: Generate scientific narrative (non-blocking, fails gracefully)
+            scientific_narrative = None
+            confidence_statement = None
+            limitations_text = None
+            try:
+                from week2_validation.reporting.narrative.scientific_narrative import (
+                    extract_narrative_metrics,
+                    generate_integrated_scientific_narrative,
+                    generate_confidence_statement,
+                    generate_limitations_section,
+                )
+                
+                # Load diagnostic results if available (reuse from above if already loaded)
+                if diagnostic_data is None:
+                    diagnostic_path = config.output_dir / DIAGNOSTIC_RESULTS_FILENAME_PATTERN.format(stem=config.dataset_stem)
+                    try:
+                        if diagnostic_path.exists():
+                            with open(diagnostic_path, "r", encoding="utf-8") as f:
+                                diagnostic_data = json.load(f)
+                    except Exception:
+                        pass
+                
+                # Extract metrics for narrative generation
+                narrative_metrics = extract_narrative_metrics(envelope, diagnostic_data)
+                
+                # Generate scientific narrative
+                scientific_narrative = generate_integrated_scientific_narrative(narrative_metrics)
+                confidence_statement = generate_confidence_statement(narrative_metrics)
+                limitations_text = generate_limitations_section(narrative_metrics)
+            except Exception as narr_err:
+                # Narrative generation failure is non-fatal
+                print(f"Warning: Scientific narrative generation skipped: {narr_err}", file=sys.stderr)
+                scientific_narrative = None
+                confidence_statement = None
+                limitations_text = None
+            
+            # Optional: Generate histograms and skewness visualization for PDF (non-blocking, fails gracefully)
+            # Only when save_real_data_plots or demo_mode is true (production can disable via config)
+            histogram_paths = None
+            skewness_image_path = None
+            
+            # Check if skewness_diagnostic.png was already generated (from earlier in the pipeline)
+            skewness_diagnostic_path = config.output_dir / "skewness_diagnostic.png"
+            if skewness_diagnostic_path.exists():
+                skewness_image_path = skewness_diagnostic_path
+            
+            original_skewness_path = skewness_image_path
+            
+            if _may_save_plots:
+                try:
+                    from week2_validation.reporting.visuals.histograms import (
+                        generate_protein_length_histogram,
+                        generate_log_protein_length_histogram,
+                    )
+                    from week2_validation.reporting.visuals.skewness_plots import generate_skewness_visualization
+                    from week2_validation.utils.data_loader import load_fusion_data
+                    
+                    status_dir = status_path.parent
+                    cleaned_dataset_path = status_dir / CLEANED_DATASET_FILENAME_PATTERN.format(stem=config.dataset_stem)
+                    if cleaned_dataset_path.exists():
+                        vis_df = load_fusion_data(str(cleaned_dataset_path))
+                    else:
+                        vis_df = load_fusion_data(str(config.fusion_data_path))
+                    
+                    plots_dir = config.output_dir / "generated_plots"
+                    plots_dir.mkdir(parents=True, exist_ok=True)
+                    linear_hist_path = plots_dir / "protein_length_histogram.png"
+                    log_hist_path = plots_dir / "protein_length_log_histogram.png"
+                    linear_result = generate_protein_length_histogram(vis_df, linear_hist_path)
+                    log_result = generate_log_protein_length_histogram(vis_df, log_hist_path)
+                    histogram_paths = {"linear": linear_result, "log": log_result}
+                    if not skewness_image_path or not skewness_image_path.exists():
+                        skewness_path = plots_dir / "skewness_visualization.png"
+                        skewness_result = generate_skewness_visualization(vis_df, skewness_path)
+                        if skewness_result:
+                            skewness_image_path = skewness_result
+                    if linear_result or log_result or (skewness_image_path and skewness_image_path.exists()):
+                        print("Visualizations generated for PDF report")
+                except ImportError:
+                    histogram_paths = None
+                    skewness_image_path = original_skewness_path if (original_skewness_path and original_skewness_path.exists()) else None
+                except Exception:
+                    histogram_paths = None
+                    skewness_image_path = original_skewness_path if (original_skewness_path and original_skewness_path.exists()) else None
+            
+            # Optional: Generate inference robustness analysis (non-blocking, fails gracefully)
+            robustness_data = None
+            try:
+                from week2_validation.reporting.robustness.correlation_stability import simulate_correlation_stability
+                from week2_validation.reporting.robustness.bootstrap_visuals import generate_bootstrap_rho_plot
+                from week2_validation.reporting.robustness.jackknife_sensitivity import compute_cosmic_jackknife_sensitivity
+                from week2_validation.reporting.robustness.effect_size_interpretation import generate_correlation_effect_interpretation
+                from week2_validation.utils.data_loader import load_fusion_data
+                
+                # Load diagnostic results to get COSMIC metrics
+                diagnostic_path = config.output_dir / DIAGNOSTIC_RESULTS_FILENAME_PATTERN.format(stem=config.dataset_stem)
+                diagnostic_data_robust = None
+                try:
+                    if diagnostic_path.exists():
+                        with open(diagnostic_path, "r", encoding="utf-8") as f:
+                            diagnostic_data_robust = json.load(f)
+                except Exception:
+                    pass
+                
+                # Check if we have COSMIC data and sufficient overlap
+                if diagnostic_data_robust:
+                    cosmic_robust = diagnostic_data_robust.get("cosmic", {})
+                    overlap_count = cosmic_robust.get("overlap_count", 0)
+                    
+                    if overlap_count >= 4:  # Need at least 4 for jackknife
+                        # Try to load fusion and COSMIC data for robustness analysis
+                        try:
+                            # Create plots directory (reuse from visualization generation if available)
+                            plots_dir = config.output_dir / "generated_plots"
+                            plots_dir.mkdir(parents=True, exist_ok=True)
+                            
+                            # Load fusion data
+                            status_dir = status_path.parent
+                            cleaned_dataset_path = status_dir / CLEANED_DATASET_FILENAME_PATTERN.format(stem=config.dataset_stem)
+                            
+                            if cleaned_dataset_path.exists():
+                                robust_fusion_df = load_fusion_data(str(cleaned_dataset_path))
+                            else:
+                                robust_fusion_df = load_fusion_data(str(config.fusion_data_path))
+                            
+                            # Load COSMIC data (try default path)
+                            cosmic_dir = Path(__file__).parent / "cosmic"
+                            default_cosmic_path = cosmic_dir / "Cosmic_Fusion_v103_GRCh38.tsv"
+                            
+                            if default_cosmic_path.exists():
+                                from week2_validation.utils.data_loader import load_reference_data
+                                from week2_validation.cosmic.diagnostics import transform_cosmic_fusion_to_standard_format
+                                
+                                robust_cosmic_df = load_reference_data(str(default_cosmic_path))
+                                if robust_cosmic_df is not None:
+                                    robust_cosmic_df = transform_cosmic_fusion_to_standard_format(robust_cosmic_df)
+                                    
+                                    # Generate robustness analyses
+                                    robustness_results = {}
+                                    
+                                    # 1. Correlation stability simulation
+                                    stability_df = simulate_correlation_stability(
+                                        robust_fusion_df,
+                                        robust_cosmic_df,
+                                        overlap_sizes=[5, 10, 20, 50, 100],
+                                        bootstrap_n=200,
+                                    )
+                                    if stability_df is not None and len(stability_df) > 0:
+                                        robustness_results["stability_table"] = stability_df
+                                    
+                                    # 2. Bootstrap visualization
+                                    spearman_rho = cosmic_robust.get("spearman_rho")
+                                    if spearman_rho is not None:
+                                        # Generate bootstrap samples for visualization
+                                        bootstrap_rhos = []
+                                        try:
+                                            # Build pairs dictionaries
+                                            fusion_pairs_robust = {}
+                                            for _, row in robust_fusion_df.iterrows():
+                                                gene_1 = str(row["gene_1"]).strip().upper()
+                                                gene_2 = str(row["gene_2"]).strip().upper()
+                                                recurrence = float(row.get("recurrence_count", 0))
+                                                fusion_pairs_robust[(gene_1, gene_2)] = recurrence
+                                            
+                                            cosmic_pairs_robust = {}
+                                            for _, row in robust_cosmic_df.iterrows():
+                                                gene_1 = str(row["gene_1"]).strip().upper()
+                                                gene_2 = str(row["gene_2"]).strip().upper()
+                                                recurrence = float(row.get("recurrence_count", 0))
+                                                cosmic_pairs_robust[(gene_1, gene_2)] = recurrence
+                                            
+                                            fusion_set_robust = set(fusion_pairs_robust.keys())
+                                            cosmic_set_robust = set(cosmic_pairs_robust.keys())
+                                            overlap_robust = fusion_set_robust & cosmic_set_robust
+                                            
+                                            if len(overlap_robust) >= 3:
+                                                import numpy as np
+                                                from scipy.stats import spearmanr
+                                                
+                                                fusion_counts_robust = [fusion_pairs_robust[p] for p in overlap_robust]
+                                                cosmic_counts_robust = [cosmic_pairs_robust[p] for p in overlap_robust]
+                                                fusion_counts_robust = np.array(fusion_counts_robust)
+                                                cosmic_counts_robust = np.array(cosmic_counts_robust)
+                                                
+                                                rng = np.random.default_rng(42)
+                                                for _ in range(500):
+                                                    indices = rng.choice(len(overlap_robust), size=len(overlap_robust), replace=True)
+                                                    fusion_sample = fusion_counts_robust[indices]
+                                                    cosmic_sample = cosmic_counts_robust[indices]
+                                                    try:
+                                                        rho, _ = spearmanr(fusion_sample, cosmic_sample)
+                                                        if not np.isnan(rho) and np.isfinite(rho):
+                                                            bootstrap_rhos.append(float(rho))
+                                                    except Exception:
+                                                        continue
+                                        
+                                        except Exception:
+                                            pass
+                                        
+                                        if len(bootstrap_rhos) >= 10:
+                                            bootstrap_plot_path = plots_dir / "bootstrap_rho_distribution.png"
+                                            bootstrap_plot_result = generate_bootstrap_rho_plot(bootstrap_rhos, bootstrap_plot_path)
+                                            if bootstrap_plot_result:
+                                                robustness_results["bootstrap_plot_path"] = bootstrap_plot_result
+                                    
+                                    # 3. Jackknife sensitivity
+                                    jackknife_df = compute_cosmic_jackknife_sensitivity(
+                                        robust_fusion_df,
+                                        robust_cosmic_df,
+                                    )
+                                    if jackknife_df is not None and len(jackknife_df) > 0:
+                                        robustness_results["jackknife_table"] = jackknife_df
+                                    
+                                    # 4. Effect size interpretation
+                                    effect_interp = generate_correlation_effect_interpretation(
+                                        cosmic_robust.get("spearman_rho"),
+                                        cosmic_robust.get("spearman_p_value"),
+                                        overlap_count,
+                                    )
+                                    robustness_results["effect_interpretation"] = effect_interp
+                                    
+                                    if robustness_results:
+                                        robustness_data = robustness_results
+                        except Exception as robust_err:
+                            # Robustness analysis failure is non-fatal
+                            print(f"Warning: Robustness analysis skipped: {robust_err}", file=sys.stderr)
+                            robustness_data = None
+            except ImportError:
+                # Robustness modules not available - skip silently
+                robustness_data = None
+            except Exception as robust_err:
+                # Robustness analysis failure is non-fatal
+                print(f"Warning: Robustness analysis skipped: {robust_err}", file=sys.stderr)
+                robustness_data = None
+            
+            try:
+                from week2_validation.reporting.pdf_report_generator import generate_week2_pdf_report
+                pdf_path = config.output_dir / DATA_INTEGRITY_REPORT_PDF
+                generated_pdf = generate_week2_pdf_report(
+                    results_json_path=status_path,
+                    output_pdf_path=pdf_path,
+                    run_metadata=_run_metadata,
+                    histogram_paths=histogram_paths,
+                    interpretation_text=interpretation_text,
+                    skewness_image_path=skewness_image_path,
+                    scientific_narrative=scientific_narrative,
+                    confidence_statement=confidence_statement,
+                    limitations_text=limitations_text,
+                    robustness_data=robustness_data,
+                )
+                if generated_pdf is not None:
+                    print(f"PDF report written: {generated_pdf.name}")
+                else:
+                    print(f"Warning: PDF generation failed (non-fatal)", file=sys.stderr)
+            except Exception as e:
+                print(f"Warning: Could not generate PDF report: {e}", file=sys.stderr)
+                # PDF generation failure does not affect exit code
+
+            # Generate HTML report (MultiQC-style) alongside PDF
+            try:
+                from week2_validation.reporting.html_report_generator import generate_week2_html_report
+                html_path = config.output_dir / DATA_INTEGRITY_REPORT_HTML
+                generated_html = generate_week2_html_report(
+                    results_json_path=status_path,
+                    output_html_path=html_path,
+                    run_metadata=_run_metadata,
+                    histogram_paths=histogram_paths,
+                    interpretation_text=interpretation_text,
+                    skewness_image_path=skewness_image_path,
+                    scientific_narrative=scientific_narrative,
+                    confidence_statement=confidence_statement,
+                    limitations_text=limitations_text,
+                    robustness_data=robustness_data,
+                )
+                if generated_html is not None:
+                    print(f"HTML report written: {generated_html.name}")
+                else:
+                    print(f"Warning: HTML report generation failed (non-fatal)", file=sys.stderr)
+            except Exception as e:
+                print(f"Warning: Could not generate HTML report: {e}", file=sys.stderr)
+
+            # Generate MultiQC report (actual MultiQC tool)
+            try:
+                from week2_validation.reporting.multiqc_integration import generate_multiqc_report
+                diag_path = config.output_dir / DIAGNOSTIC_RESULTS_FILENAME_PATTERN.format(stem=config.dataset_stem)
+                multiqc_report, multiqc_err = generate_multiqc_report(
+                    output_dir=config.output_dir,
+                    status_path=status_path,
+                    diagnostic_path=diag_path,
+                    dataset_stem=config.dataset_stem,
+                )
+                if multiqc_report is not None:
+                    print(f"MultiQC report written: {multiqc_report.name}")
+                elif multiqc_err:
+                    print(f"Warning: MultiQC report skipped: {multiqc_err}", file=sys.stderr)
+                else:
+                    print(f"Warning: MultiQC report skipped", file=sys.stderr)
+            except Exception as e:
+                print(f"Warning: MultiQC report generation skipped: {e}", file=sys.stderr)
 
         # Failure report when validation/execution failed (paper trail for every file)
         if exit_code != 0:

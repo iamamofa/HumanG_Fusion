@@ -39,6 +39,7 @@ USAGE CONTEXT:
 from __future__ import annotations
 
 import math
+import sys
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -305,9 +306,13 @@ def validate_input(data: ArrayLike) -> np.ndarray:
     # -------------------------------------------------------------------------
     if isinstance(data, np.ndarray):
         arr = data.copy()
+        if arr.dtype == np.bool_:
+            arr = arr.astype(np.float64)
     elif isinstance(data, list):
         try:
             arr = np.array(data)
+            if arr.dtype == np.bool_:
+                arr = arr.astype(np.float64)
         except (ValueError, TypeError) as exc:
             raise ValidationError(
                 f"Failed to convert list to array. Ensure all elements are numeric. "
@@ -315,6 +320,10 @@ def validate_input(data: ArrayLike) -> np.ndarray:
             ) from exc
     elif _PANDAS_AVAILABLE and isinstance(data, pd.Series):
         arr = data.to_numpy().copy()
+        if arr.dtype == np.bool_:
+            arr = arr.astype(np.float64)
+    elif isinstance(data, (bool, np.bool_)):
+        arr = np.array([1.0 if data else 0.0], dtype=np.float64)
     else:
         supported = "list, numpy.ndarray"
         if _PANDAS_AVAILABLE:
@@ -1089,6 +1098,363 @@ def generate_skewness_reference_plot(output_path: Path) -> Optional[Path]:
 
 
 # =============================================================================
+# PUBLICATION-QUALITY VISUALIZATIONS
+# =============================================================================
+
+def generate_comprehensive_distribution_plot(
+    arr: np.ndarray,
+    output_path: Path,
+    figsize: Tuple[float, float] = (10, 8),
+) -> Optional[Path]:
+    """
+    Generate publication-quality comprehensive distribution plot.
+    
+    Creates a two-panel figure:
+    - Top: Histogram with KDE (Kernel Density Estimation) overlay
+    - Bottom: Box plot to highlight outliers
+    
+    Uses 'seaborn-whitegrid' style for clean, academic appearance.
+    
+    Parameters
+    ----------
+    arr : np.ndarray
+        Validated input array (protein lengths).
+    output_path : Path
+        Full path for output PNG file.
+    figsize : Tuple[float, float], optional
+        Figure size in inches (width, height). Default is (10, 8).
+    
+    Returns
+    -------
+    Optional[Path]
+        Path to saved file, or None if save failed.
+    """
+    try:
+        import seaborn as sns
+        sns.set_style("whitegrid")
+    except ImportError:
+        # Fallback if seaborn not available
+        pass
+    
+    try:
+        fig, axes = plt.subplots(2, 1, figsize=figsize, sharex=True)
+        
+        # =====================================================================
+        # TOP PANEL: Histogram with KDE overlay
+        # =====================================================================
+        ax1 = axes[0]
+        
+        # Histogram
+        n_bins = _determine_bin_count(len(arr))
+        counts, bins, patches = ax1.hist(
+            arr,
+            bins=n_bins,
+            edgecolor="black",
+            linewidth=0.5,
+            alpha=0.7,
+            color="#4878CF",
+            density=True,
+            label="Histogram"
+        )
+        
+        # KDE overlay
+        try:
+            from scipy.stats import gaussian_kde
+            kde = gaussian_kde(arr)
+            x_kde = np.linspace(arr.min(), arr.max(), 300)
+            y_kde = kde(x_kde)
+            ax1.plot(x_kde, y_kde, 'r-', linewidth=2, label="KDE", alpha=0.8)
+        except ImportError:
+            # Fallback: use seaborn kdeplot if available
+            try:
+                import seaborn as sns
+                sns.kdeplot(data=arr, ax=ax1, color='red', linewidth=2, label="KDE", alpha=0.8)
+            except ImportError:
+                pass  # Skip KDE if neither scipy nor seaborn available
+        
+        ax1.set_ylabel("Density", fontsize=11)
+        ax1.set_title("Protein Length Distribution with KDE Overlay", fontsize=12, fontweight="bold")
+        ax1.legend(loc="upper right", fontsize=9)
+        ax1.grid(True, alpha=0.3)
+        
+        # =====================================================================
+        # BOTTOM PANEL: Box plot
+        # =====================================================================
+        ax2 = axes[1]
+        
+        bp = ax2.boxplot(
+            [arr],
+            vert=True,
+            patch_artist=True,
+            widths=0.6,
+            showmeans=True,
+            meanline=True,
+        )
+        
+        # Style the box plot
+        for patch in bp['boxes']:
+            patch.set_facecolor("#4878CF")
+            patch.set_alpha(0.7)
+        
+        for element in ['whiskers', 'fliers', 'means', 'medians', 'caps']:
+            plt.setp(bp[element], color='black', linewidth=1.5)
+        
+        plt.setp(bp['medians'], linewidth=2)
+        
+        ax2.set_ylabel("Protein Length", fontsize=11)
+        ax2.set_xlabel("Protein Length", fontsize=11)
+        ax2.set_title("Box Plot: Outlier Detection", fontsize=12, fontweight="bold")
+        ax2.set_xticklabels(["Protein Length"])
+        ax2.grid(True, alpha=0.3, axis='y')
+        
+        # Add statistics annotation
+        stats_text = (
+            f"Mean: {np.mean(arr):.1f} | "
+            f"Median: {np.median(arr):.1f} | "
+            f"Std: {np.std(arr, ddof=1):.1f}"
+        )
+        ax2.text(
+            0.5, 0.02,
+            stats_text,
+            transform=ax2.transAxes,
+            ha='center',
+            fontsize=9,
+            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5)
+        )
+        
+        plt.tight_layout()
+        out = Path(output_path)
+        fig.savefig(out, dpi=300, bbox_inches="tight")
+        plt.close(fig)
+        return out
+        
+    except Exception as e:
+        print(f"Warning: Comprehensive distribution plot generation failed: {e}", file=sys.stderr)
+        return None
+
+
+def generate_benford_analysis_plot(
+    observed_frequencies: Dict[int, float],
+    expected_frequencies: Dict[int, float],
+    output_path: Path,
+    figsize: Tuple[float, float] = (10, 6),
+) -> Optional[Path]:
+    """
+    Generate publication-quality Benford's Law analysis plot.
+    
+    Creates a bar chart for observed frequencies (blue) with
+    a line chart overlay for Benford expected frequencies (red, dashed).
+    
+    Parameters
+    ----------
+    observed_frequencies : Dict[int, float]
+        Dictionary mapping digits 1-9 to observed frequencies.
+    expected_frequencies : Dict[int, float]
+        Dictionary mapping digits 1-9 to expected frequencies.
+    output_path : Path
+        Full path for output PNG file.
+    figsize : Tuple[float, float], optional
+        Figure size in inches (width, height). Default is (10, 6).
+    
+    Returns
+    -------
+    Optional[Path]
+        Path to saved file, or None if save failed.
+    """
+    try:
+        import seaborn as sns
+        sns.set_style("whitegrid")
+    except ImportError:
+        pass
+    
+    try:
+        fig, ax = plt.subplots(figsize=figsize)
+        
+        # Prepare data
+        digits = list(range(1, 10))
+        observed = [observed_frequencies.get(d, 0) for d in digits]
+        expected = [expected_frequencies.get(d, 0) for d in digits]
+        
+        # Bar chart for observed frequencies (blue)
+        bars = ax.bar(
+            digits,
+            observed,
+            alpha=0.7,
+            color='#4878CF',
+            edgecolor='black',
+            linewidth=0.5,
+            label='Observed Frequencies',
+            width=0.6
+        )
+        
+        # Line chart for expected frequencies (red, dashed) - use fmt for color to avoid redundancy
+        ax.plot(
+            digits,
+            expected,
+            'ro--',
+            linewidth=2,
+            markersize=8,
+            label='Benford Expected',
+            alpha=0.8
+        )
+        
+        # Styling
+        ax.set_xlabel("First Significant Digit", fontsize=12, fontweight="bold")
+        ax.set_ylabel("Frequency", fontsize=12, fontweight="bold")
+        ax.set_title("Benford's Law Analysis: Observed vs Expected Frequencies", 
+                     fontsize=13, fontweight="bold")
+        ax.set_xticks(digits)
+        ax.set_xticklabels([str(d) for d in digits])
+        ax.legend(loc="upper right", fontsize=10)
+        ax.grid(True, alpha=0.3, axis='y')
+        
+        # Add value labels on bars
+        for i, (obs, exp) in enumerate(zip(observed, expected)):
+            ax.text(
+                digits[i],
+                obs + 0.01,
+                f'{obs:.3f}',
+                ha='center',
+                va='bottom',
+                fontsize=8
+            )
+        
+        plt.tight_layout()
+        out = Path(output_path)
+        fig.savefig(out, dpi=300, bbox_inches="tight")
+        plt.close(fig)
+        return out
+        
+    except Exception as e:
+        print(f"Warning: Benford analysis plot generation failed: {e}", file=sys.stderr)
+        return None
+
+
+def generate_cosmic_correlation_plot(
+    fusion_recurrence: np.ndarray,
+    cosmic_recurrence: np.ndarray,
+    spearman_rho: Optional[float],
+    output_path: Path,
+    figsize: Tuple[float, float] = (10, 8),
+) -> Optional[Path]:
+    """
+    Generate publication-quality COSMIC correlation scatter plot.
+    
+    Creates a log10-log10 scatter plot with regression line and
+    annotated Spearman correlation coefficient.
+    
+    Parameters
+    ----------
+    fusion_recurrence : np.ndarray
+        Array of fusion recurrence counts (our data).
+    cosmic_recurrence : np.ndarray
+        Array of COSMIC recurrence counts.
+    spearman_rho : Optional[float]
+        Spearman correlation coefficient to annotate on plot.
+    output_path : Path
+        Full path for output PNG file.
+    figsize : Tuple[float, float], optional
+        Figure size in inches (width, height). Default is (10, 8).
+    
+    Returns
+    -------
+    Optional[Path]
+        Path to saved file, or None if save failed.
+    """
+    try:
+        import seaborn as sns
+        sns.set_style("whitegrid")
+    except ImportError:
+        pass
+    
+    try:
+        # Filter out zeros and ensure positive values for log10
+        mask = (fusion_recurrence > 0) & (cosmic_recurrence > 0)
+        fusion_log = np.log10(fusion_recurrence[mask])
+        cosmic_log = np.log10(cosmic_recurrence[mask])
+        
+        if len(fusion_log) == 0:
+            return None
+        
+        fig, ax = plt.subplots(figsize=figsize)
+        
+        # Scatter plot
+        ax.scatter(
+            fusion_log,
+            cosmic_log,
+            alpha=0.6,
+            s=50,
+            color='#4878CF',
+            edgecolors='black',
+            linewidth=0.5,
+            label='Fusion Pairs'
+        )
+        
+        # Regression line
+        try:
+            from scipy.stats import linregress
+            slope, intercept, r_value, p_value, std_err = linregress(fusion_log, cosmic_log)
+            x_line = np.linspace(fusion_log.min(), fusion_log.max(), 100)
+            y_line = slope * x_line + intercept
+            ax.plot(
+                x_line,
+                y_line,
+                'r-',
+                linewidth=2,
+                label=f'Regression Line (R²={r_value**2:.3f})',
+                alpha=0.8
+            )
+        except ImportError:
+            # Fallback: use numpy polyfit
+            try:
+                coeffs = np.polyfit(fusion_log, cosmic_log, 1)
+                x_line = np.linspace(fusion_log.min(), fusion_log.max(), 100)
+                y_line = np.polyval(coeffs, x_line)
+                ax.plot(
+                    x_line,
+                    y_line,
+                    'r-',
+                    linewidth=2,
+                    label='Regression Line',
+                    alpha=0.8
+                )
+            except Exception:
+                pass
+        
+        # Labels and title
+        ax.set_xlabel("log₁₀(Our Recurrence)", fontsize=12, fontweight="bold")
+        ax.set_ylabel("log₁₀(COSMIC Recurrence)", fontsize=12, fontweight="bold")
+        ax.set_title("COSMIC Correlation: Recurrence Comparison", 
+                     fontsize=13, fontweight="bold")
+        
+        # Annotate Spearman correlation
+        if spearman_rho is not None:
+            annotation_text = f"Spearman ρ = {spearman_rho:.4f}"
+            ax.text(
+                0.05, 0.95,
+                annotation_text,
+                transform=ax.transAxes,
+                fontsize=11,
+                fontweight="bold",
+                verticalalignment='top',
+                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8)
+            )
+        
+        ax.legend(loc="lower right", fontsize=10)
+        ax.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        out = Path(output_path)
+        fig.savefig(out, dpi=300, bbox_inches="tight")
+        plt.close(fig)
+        return out
+        
+    except Exception as e:
+        print(f"Warning: COSMIC correlation plot generation failed: {e}", file=sys.stderr)
+        return None
+
+
+# =============================================================================
 # VISUALIZATION SAVING (when --run-diagnostics is active)
 # =============================================================================
 def save_protein_distribution_png(
@@ -1227,6 +1593,10 @@ __all__ = [
     "save_protein_distribution_png",
     "generate_skewness_reference_plot",
     "generate_dynamic_skewness_plot",
+    # Publication-quality visualizations
+    "generate_comprehensive_distribution_plot",
+    "generate_benford_analysis_plot",
+    "generate_cosmic_correlation_plot",
     # Result containers
     "DiagnosticResult",
     "DescriptiveStatistics",

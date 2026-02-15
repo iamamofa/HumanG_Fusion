@@ -62,24 +62,27 @@ def verify_outputs(output_dir, dataset_stem):
     print_banner("Verifying Outputs", "~")
     
     output_path = Path(output_dir)
-    expected_files = [
-        f"week2_status_{dataset_stem}.json",
-        f"week2_dataset_certification_{dataset_stem}.json",
-        f"week2_diagnostic_results_{dataset_stem}.json",
-        f"week2_cleaned_dataset_{dataset_stem}.csv",
-        f"Statistical_Integrity_Report_{dataset_stem}.md",
-        "protein_distribution.png",
-        "skewness_diagnostic.png",
+    # Each tuple: (primary_name, legacy_name or None) — pass if either exists
+    file_checks = [
+        (f"validation_status_{dataset_stem}.json", f"week2_status_{dataset_stem}.json"),
+        (f"validation_dataset_certification_{dataset_stem}.json", f"week2_dataset_certification_{dataset_stem}.json"),
+        (f"validation_diagnostic_results_{dataset_stem}.json", f"week2_diagnostic_results_{dataset_stem}.json"),
+        (f"validation_cleaned_dataset_{dataset_stem}.csv", f"week2_cleaned_dataset_{dataset_stem}.csv"),
+        (f"Statistical_Integrity_Report_{dataset_stem}.md", None),
+        ("protein_distribution.png", None),
+        ("skewness_diagnostic.png", None),
     ]
     
     all_exist = True
-    for filename in expected_files:
-        filepath = output_path / filename
-        if filepath.exists():
-            size = filepath.stat().st_size
-            print(f"  ✅ {filename} ({size:,} bytes)")
+    for primary, legacy in file_checks:
+        p_path = output_path / primary
+        l_path = output_path / legacy if legacy else None
+        if p_path.exists():
+            print(f"  ✅ {primary} ({p_path.stat().st_size:,} bytes)")
+        elif l_path and l_path.exists():
+            print(f"  ✅ {primary} (legacy: {legacy}) ({l_path.stat().st_size:,} bytes)")
         else:
-            print(f"  ❌ {filename} (missing)")
+            print(f"  ❌ {primary} (missing)")
             all_exist = False
     
     print()
@@ -92,7 +95,9 @@ def verify_new_features(output_dir, dataset_stem):
     
     import json
     
-    diagnostic_file = Path(output_dir) / f"week2_diagnostic_results_{dataset_stem}.json"
+    diagnostic_file = Path(output_dir) / f"validation_diagnostic_results_{dataset_stem}.json"
+    if not diagnostic_file.exists():
+        diagnostic_file = Path(output_dir) / f"week2_diagnostic_results_{dataset_stem}.json"
     
     if not diagnostic_file.exists():
         print("  ❌ Diagnostic results file not found")

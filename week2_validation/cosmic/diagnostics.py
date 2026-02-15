@@ -43,22 +43,85 @@ _logger = logging.getLogger(__name__)
 # Import alias normalization
 from week2_validation.cosmic.gene_alias_map import normalize_gene_alias
 
+
+def transform_cosmic_fusion_to_standard_format(cosmic_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Transform COSMIC Fusion TSV format to standard format expected by diagnostics.
+    
+    COSMIC Fusion format has columns:
+    - FIVE_PRIME_GENE_SYMBOL
+    - THREE_PRIME_GENE_SYMBOL
+    - COSMIC_SAMPLE_ID
+    - FUSION_SYNTAX
+    
+    Standard format requires:
+    - gene_1
+    - gene_2
+    - recurrence_count (derived from grouping by gene pairs)
+    
+    Args:
+        cosmic_df: DataFrame loaded from COSMIC Fusion TSV file
+        
+    Returns:
+        DataFrame with columns: gene_1, gene_2, recurrence_count
+        
+    Raises:
+        ValueError: If required COSMIC columns are missing
+    """
+    # Check if this is already in standard format (has gene_1, gene_2, recurrence_count)
+    if all(col in cosmic_df.columns for col in ["gene_1", "gene_2", "recurrence_count"]):
+        return cosmic_df
+    
+    # Check if this is COSMIC Fusion format
+    required_cosmic_cols = ["FIVE_PRIME_GENE_SYMBOL", "THREE_PRIME_GENE_SYMBOL"]
+    if not all(col in cosmic_df.columns for col in required_cosmic_cols):
+        raise ValueError(
+            f"COSMIC data must have either standard format columns (gene_1, gene_2, recurrence_count) "
+            f"or COSMIC Fusion format columns ({required_cosmic_cols}). "
+            f"Found columns: {list(cosmic_df.columns)}"
+        )
+    
+    # Filter rows where both gene symbols are present and not empty
+    cosmic_df = cosmic_df.copy()
+    cosmic_df = cosmic_df[
+        cosmic_df["FIVE_PRIME_GENE_SYMBOL"].notna() & 
+        (cosmic_df["FIVE_PRIME_GENE_SYMBOL"].astype(str).str.strip() != "") &
+        cosmic_df["THREE_PRIME_GENE_SYMBOL"].notna() & 
+        (cosmic_df["THREE_PRIME_GENE_SYMBOL"].astype(str).str.strip() != "")
+    ].copy()
+    
+    if len(cosmic_df) == 0:
+        raise ValueError("No valid gene pairs found in COSMIC data after filtering")
+    
+    # Create gene_1 and gene_2 columns (normalize to uppercase, strip whitespace)
+    cosmic_df["gene_1"] = cosmic_df["FIVE_PRIME_GENE_SYMBOL"].astype(str).str.strip().str.upper()
+    cosmic_df["gene_2"] = cosmic_df["THREE_PRIME_GENE_SYMBOL"].astype(str).str.strip().str.upper()
+    
+    # Group by gene pair and count occurrences (recurrence)
+    recurrence_df = (
+        cosmic_df.groupby(["gene_1", "gene_2"])
+        .size()
+        .reset_index(name="recurrence_count")
+    )
+    
+    return recurrence_df[["gene_1", "gene_2", "recurrence_count"]]
+
 # Import negative control test
 from week2_validation.cosmic.statistical_controls import compute_negative_control_correlation
 
 # Import quality gate
 from week2_validation.cosmic.quality_gate import compute_cosmic_validation_score
 
-# Try to import scipy for Spearman correlation and hypergeometric test (optional dependency)
+# Try to import scipy for Spearman correlation, hypergeometric test, and Mann-Whitney U test (optional dependency)
 try:
-    from scipy.stats import spearmanr, hypergeom
+    from scipy.stats import spearmanr, hypergeom, mannwhitneyu
     import scipy
     SCIPY_AVAILABLE = True
     SCIPY_VERSION = scipy.__version__
 except ImportError:
     SCIPY_AVAILABLE = False
     SCIPY_VERSION = None
-    _logger.warning("scipy not available; Spearman correlation and enrichment tests will not be computed")
+    _logger.warning("scipy not available; Spearman correlation, enrichment tests, and Mann-Whitney U test will not be computed")
 
 # Version info for reproducibility lock
 NUMPY_VERSION = np.__version__
@@ -120,10 +183,13 @@ def compute_cosmic_provenance(
     }
     
     # Set version based on source
-    if cosmic_reference_source == "mock" or cosmic_reference_source == "mock_fallback":
-        provenance["cosmic_reference_version"] = "mock_v1"
+    if cosmic_reference_source == "cosmic_v103_grch38_real":
+        provenance["cosmic_reference_version"] = "v103_GRCh38"
     elif cosmic_reference_source == "user_provided":
         provenance["cosmic_reference_version"] = "user_provided_v1"
+    elif cosmic_reference_source == "mock" or cosmic_reference_source == "mock_fallback":
+        # Legacy support (should not occur in production)
+        provenance["cosmic_reference_version"] = "mock_v1"
     
     # Compute file hash if path is available
     if cosmic_file_path and cosmic_file_path.exists():
@@ -779,3 +845,329 @@ def compute_cosmic_statistical_metrics(
     metrics.update(quality_gate)
     
     return metrics
+
+
+def run_null_model_falsification(
+    fusion_df: pd.DataFrame,
+    cosmic_df: pd.DataFrame,
+    iterations: int = 1000,
+    random_seed: int = 42,
+) -> Dict[str, Any]:
+    """
+    Run null model falsification test by shuffling Gene 2 in fusion dataset.
+    
+    This function tests whether the observed overlap with COSMIC could occur by chance
+    by randomly shuffling Gene 2 values in the fusion dataset and counting overlaps
+    for each shuffle.
+    
+    Args:
+        fusion_df: DataFrame with columns: gene_1, gene_2, recurrence_count
+        cosmic_df: DataFrame with columns: gene_1, gene_2, recurrence_count
+        iterations: Number of permutation iterations (default: 1000)
+        random_seed: Random seed for reproducibility (default: 42)
+    
+    Returns:
+        Dictionary with:
+        - observed_overlap: Actual overlap count between fusion and COSMIC
+        - null_mean_overlap: Mean overlap count from null simulations
+        - null_std_overlap: Standard deviation of null overlap counts
+        - empirical_p_value: Proportion of null simulations with overlap >= observed
+        - n_simulations: Number of simulations performed
+        - random_seed: Random seed used
+    """
+    base_result = {
+        "observed_overlap": None,
+        "null_mean_overlap": None,
+        "null_std_overlap": None,
+        "empirical_p_value": None,
+        "n_simulations": iterations,
+        "random_seed": random_seed,
+    }
+    
+    # Validate inputs
+    if fusion_df is None or cosmic_df is None:
+        return base_result
+    
+    required_cols = {"gene_1", "gene_2", "recurrence_count"}
+    if not required_cols.issubset(set(fusion_df.columns)) or not required_cols.issubset(set(cosmic_df.columns)):
+        return base_result
+    
+    # Normalize gene columns
+    fusion_df_norm, _, _ = _normalize_gene_columns(fusion_df.copy())
+    cosmic_df_norm, _, _ = _normalize_gene_columns(cosmic_df.copy())
+    
+    # Create normalized pairs for COSMIC (for fast lookup)
+    def normalize_pair(gene_1, gene_2):
+        g1 = str(gene_1).strip().upper()
+        g2 = str(gene_2).strip().upper()
+        return tuple(sorted([g1, g2]))
+    
+    cosmic_pairs = set()
+    for _, row in cosmic_df_norm.iterrows():
+        pair = normalize_pair(row["gene_1"], row["gene_2"])
+        cosmic_pairs.add(pair)
+    
+    # Compute observed overlap
+    fusion_pairs = set()
+    for _, row in fusion_df_norm.iterrows():
+        pair = normalize_pair(row["gene_1"], row["gene_2"])
+        fusion_pairs.add(pair)
+    
+    observed_overlap = len(fusion_pairs & cosmic_pairs)
+    
+    if observed_overlap == 0 or len(fusion_df_norm) < 3:
+        return {
+            **base_result,
+            "observed_overlap": observed_overlap,
+        }
+    
+    # Run null model simulations: shuffle Gene 2 values
+    rng = np.random.default_rng(random_seed)
+    null_overlaps = []
+    
+    fusion_df_shuffled = fusion_df_norm.copy()
+    gene_2_values = fusion_df_shuffled["gene_2"].values.copy()
+    
+    for _ in range(iterations):
+        # Shuffle Gene 2 values
+        shuffled_gene_2 = rng.permutation(gene_2_values)
+        fusion_df_shuffled["gene_2"] = shuffled_gene_2
+        
+        # Compute overlap with shuffled data
+        shuffled_pairs = set()
+        for _, row in fusion_df_shuffled.iterrows():
+            pair = normalize_pair(row["gene_1"], row["gene_2"])
+            shuffled_pairs.add(pair)
+        
+        shuffled_overlap = len(shuffled_pairs & cosmic_pairs)
+        null_overlaps.append(shuffled_overlap)
+    
+    null_overlaps = np.array(null_overlaps)
+    null_mean = float(np.mean(null_overlaps))
+    null_std = float(np.std(null_overlaps))
+    
+    # Compute empirical p-value: proportion of null simulations with overlap >= observed
+    empirical_p_value = float(np.mean(null_overlaps >= observed_overlap))
+    
+    return {
+        "observed_overlap": observed_overlap,
+        "null_mean_overlap": null_mean,
+        "null_std_overlap": null_std,
+        "empirical_p_value": empirical_p_value,
+        "n_simulations": iterations,
+        "random_seed": random_seed,
+    }
+
+
+def assess_external_validity_stability(
+    fusion_df: pd.DataFrame,
+    cosmic_df: pd.DataFrame,
+    n_bootstrap: int = 100,
+    confidence_level: float = 0.95,
+    random_seed: int = 42,
+) -> Dict[str, Any]:
+    """
+    Assess external validity stability using bootstrap analysis of Spearman correlation.
+    
+    This function runs bootstrap iterations of Spearman correlation to estimate
+    the 95% confidence interval, providing a measure of correlation stability.
+    
+    Args:
+        fusion_df: DataFrame with columns: gene_1, gene_2, recurrence_count
+        cosmic_df: DataFrame with columns: gene_1, gene_2, recurrence_count
+        n_bootstrap: Number of bootstrap iterations (default: 100)
+        confidence_level: Confidence level for CI (default: 0.95 for 95% CI)
+        random_seed: Random seed for reproducibility (default: 42)
+    
+    Returns:
+        Dictionary with:
+        - stability_ci_lower: Lower bound of 95% CI for Spearman rho
+        - stability_ci_upper: Upper bound of 95% CI for Spearman rho
+        - bootstrap_iterations: Number of bootstrap iterations
+        - bootstrap_seed: Random seed used
+    """
+    base_result = {
+        "stability_ci_lower": None,
+        "stability_ci_upper": None,
+        "bootstrap_iterations": n_bootstrap,
+        "bootstrap_seed": random_seed,
+    }
+    
+    if not SCIPY_AVAILABLE:
+        return base_result
+    
+    # Validate inputs
+    if fusion_df is None or cosmic_df is None:
+        return base_result
+    
+    required_cols = {"gene_1", "gene_2", "recurrence_count"}
+    if not required_cols.issubset(set(fusion_df.columns)) or not required_cols.issubset(set(cosmic_df.columns)):
+        return base_result
+    
+    # Normalize gene columns
+    fusion_df_norm, _, _ = _normalize_gene_columns(fusion_df.copy())
+    cosmic_df_norm, _, _ = _normalize_gene_columns(cosmic_df.copy())
+    
+    # Create normalized pairs
+    def normalize_pair(gene_1, gene_2):
+        g1 = str(gene_1).strip().upper()
+        g2 = str(gene_2).strip().upper()
+        return tuple(sorted([g1, g2]))
+    
+    fusion_pairs = {}
+    for _, row in fusion_df_norm.iterrows():
+        pair = normalize_pair(row["gene_1"], row["gene_2"])
+        count = row["recurrence_count"]
+        if pair not in fusion_pairs or count > fusion_pairs[pair]:
+            fusion_pairs[pair] = count
+    
+    cosmic_pairs = {}
+    for _, row in cosmic_df_norm.iterrows():
+        pair = normalize_pair(row["gene_1"], row["gene_2"])
+        count = row["recurrence_count"]
+        if pair not in cosmic_pairs or count > cosmic_pairs[pair]:
+            cosmic_pairs[pair] = count
+    
+    overlap = set(fusion_pairs.keys()) & set(cosmic_pairs.keys())
+    
+    if len(overlap) < 3:
+        return base_result
+    
+    # Extract recurrence counts for overlapping pairs
+    fusion_counts = np.array([fusion_pairs[pair] for pair in overlap])
+    cosmic_counts = np.array([cosmic_pairs[pair] for pair in overlap])
+    
+    # Run bootstrap
+    rng = np.random.default_rng(random_seed)
+    bootstrap_rhos = []
+    n = len(overlap)
+    
+    for _ in range(n_bootstrap):
+        # Resample with replacement
+        indices = rng.choice(n, size=n, replace=True)
+        fusion_sample = fusion_counts[indices]
+        cosmic_sample = cosmic_counts[indices]
+        
+        try:
+            rho, _ = spearmanr(fusion_sample, cosmic_sample)
+            if not np.isnan(rho):
+                bootstrap_rhos.append(rho)
+        except Exception:
+            continue
+    
+    if len(bootstrap_rhos) < 10:
+        return base_result
+    
+    bootstrap_rhos = np.array(bootstrap_rhos)
+    
+    # Compute percentile-based CI
+    alpha = 1 - confidence_level
+    lower_percentile = (alpha / 2) * 100
+    upper_percentile = (1 - alpha / 2) * 100
+    
+    ci_lower = float(np.percentile(bootstrap_rhos, lower_percentile))
+    ci_upper = float(np.percentile(bootstrap_rhos, upper_percentile))
+    
+    return {
+        "stability_ci_lower": ci_lower,
+        "stability_ci_upper": ci_upper,
+        "bootstrap_iterations": n_bootstrap,
+        "bootstrap_seed": random_seed,
+    }
+
+
+def quantify_cosmic_bias(
+    fusion_df: pd.DataFrame,
+    cosmic_df: pd.DataFrame,
+) -> Dict[str, Any]:
+    """
+    Quantify COSMIC sampling bias using Mann-Whitney U test.
+    
+    This function compares the distribution of recurrence counts between:
+    1. Our fusion data (all pairs)
+    2. COSMIC overlaps (pairs present in both datasets)
+    
+    A significant difference suggests sampling bias in COSMIC.
+    
+    Args:
+        fusion_df: DataFrame with columns: gene_1, gene_2, recurrence_count
+        cosmic_df: DataFrame with columns: gene_1, gene_2, recurrence_count
+    
+    Returns:
+        Dictionary with:
+        - mannwhitney_p_value: p-value from Mann-Whitney U test
+        - our_recurrence_median: Median recurrence count in our data
+        - cosmic_overlap_median: Median recurrence count in COSMIC overlaps
+        - bias_detected: Boolean indicating if bias is detected (p < 0.05)
+    """
+    base_result = {
+        "mannwhitney_p_value": None,
+        "our_recurrence_median": None,
+        "cosmic_overlap_median": None,
+        "bias_detected": None,
+    }
+    
+    if not SCIPY_AVAILABLE:
+        return base_result
+    
+    # Validate inputs
+    if fusion_df is None or cosmic_df is None:
+        return base_result
+    
+    required_cols = {"gene_1", "gene_2", "recurrence_count"}
+    if not required_cols.issubset(set(fusion_df.columns)) or not required_cols.issubset(set(cosmic_df.columns)):
+        return base_result
+    
+    # Normalize gene columns
+    fusion_df_norm, _, _ = _normalize_gene_columns(fusion_df.copy())
+    cosmic_df_norm, _, _ = _normalize_gene_columns(cosmic_df.copy())
+    
+    # Create normalized pairs
+    def normalize_pair(gene_1, gene_2):
+        g1 = str(gene_1).strip().upper()
+        g2 = str(gene_2).strip().upper()
+        return tuple(sorted([g1, g2]))
+    
+    fusion_pairs = {}
+    for _, row in fusion_df_norm.iterrows():
+        pair = normalize_pair(row["gene_1"], row["gene_2"])
+        count = row["recurrence_count"]
+        if pair not in fusion_pairs or count > fusion_pairs[pair]:
+            fusion_pairs[pair] = count
+    
+    cosmic_pairs = {}
+    for _, row in cosmic_df_norm.iterrows():
+        pair = normalize_pair(row["gene_1"], row["gene_2"])
+        count = row["recurrence_count"]
+        if pair not in cosmic_pairs or count > cosmic_pairs[pair]:
+            cosmic_pairs[pair] = count
+    
+    overlap = set(fusion_pairs.keys()) & set(cosmic_pairs.keys())
+    
+    if len(overlap) < 3:
+        return base_result
+    
+    # Extract recurrence counts
+    our_recurrence_counts = np.array(list(fusion_pairs.values()))
+    cosmic_overlap_counts = np.array([cosmic_pairs[pair] for pair in overlap])
+    
+    if len(our_recurrence_counts) < 3 or len(cosmic_overlap_counts) < 3:
+        return base_result
+    
+    try:
+        # Run Mann-Whitney U test (two-sided)
+        statistic, p_value = mannwhitneyu(our_recurrence_counts, cosmic_overlap_counts, alternative='two-sided')
+        
+        our_median = float(np.median(our_recurrence_counts))
+        cosmic_median = float(np.median(cosmic_overlap_counts))
+        bias_detected = bool(p_value < 0.05)  # Convert to Python bool for JSON serialization
+        
+        return {
+            "mannwhitney_p_value": float(p_value),
+            "our_recurrence_median": our_median,
+            "cosmic_overlap_median": cosmic_median,
+            "bias_detected": bias_detected,
+        }
+    except Exception as e:
+        _logger.warning(f"Error computing Mann-Whitney U test: {e}")
+        return base_result

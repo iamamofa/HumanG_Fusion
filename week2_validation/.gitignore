@@ -1,10 +1,18 @@
-# Results folder - generated output from validation runs
-results/
+# Results folder - generated output from validation runs (keep results/ and results/demo_fusion/)
+results/*
+!results/.gitkeep
+!results/demo_fusion/
 
 # Python cache
 __pycache__/
 *.pyc
 *.pyo
+
+# Pytest cache
+.pytest_cache/
+
+# Frozen inputs - generated at runtime
+frozen_inputs/
 
 # Temporary files
 *.tmp

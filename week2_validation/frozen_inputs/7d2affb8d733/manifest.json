@@ -1,8 +1,0 @@
-{
-  "source_path": "C:\\Users\\enchi\\Documents\\HumanG_Fusion\\week2_validation\\math_validation_audit\\synthetic_tests\\edge_case_very_large.csv",
-  "frozen_by": "week2_validation",
-  "frozen_at_utc": "2026-02-02T08:40:04.221543+00:00",
-  "file_hash_sha256": "7d2affb8d7336314db162ff0706cc7b84b5319bb60958f513609c6c59db5a785",
-  "week2_version": "0.1.0",
-  "original_filename": "edge_case_very_large.csv"
-}

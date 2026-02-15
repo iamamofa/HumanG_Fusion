@@ -7,8 +7,15 @@
 # -------------------------------
 # General rules
 # -------------------------------
+# Indicates this run uses demo/reference data (not production clinical data).
+# When false, allow_real_data_analysis and save_real_data_plots can restrict analysis/plots in production.
+demo_mode: true
+
 dataset_frozen_required: true
-allow_real_data_analysis: false  # must remain false until Week 1: Pipeline Execution & Data Generation freeze
+# These flags were initially set to false during threshold pre-registration.
+# They are now set to true because data analysis has been approved.
+# In production (demo_mode: false), set to false to disallow analysis/plots until approved.
+allow_real_data_analysis: true
 
 # -------------------------------
 # Sample size requirements
@@ -65,10 +72,13 @@ distribution_tests:
 # -------------------------------
 # Visualization rules
 # -------------------------------
+# save_real_data_plots was false during pre-registration; now true (analysis approved).
+# dpi 300 for publication-quality figures.
 visualization:
   allow_log_scale: true
   allow_linear_scale: true
-  save_real_data_plots: false  # must remain false until freeze
+  save_real_data_plots: true
+  dpi: 300
 
 # -------------------------------
 # COSMIC cross-validation

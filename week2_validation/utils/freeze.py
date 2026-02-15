@@ -39,9 +39,9 @@ from typing import Optional
 
 # Import version from package
 try:
-    from week2_validation import __version__ as WEEK2_VERSION
+    from week2_validation import __version__ as VALIDATION_VERSION
 except ImportError:
-    WEEK2_VERSION = "unknown"
+    VALIDATION_VERSION = "unknown"
 
 
 # =============================================================================
@@ -89,7 +89,7 @@ class FreezeManifest:
     frozen_by: str
     frozen_at_utc: str
     file_hash_sha256: str
-    week2_version: str
+    validation_version: str
     original_filename: str
 
 
@@ -173,7 +173,7 @@ def _load_manifest(manifest_path: Path) -> Optional[FreezeManifest]:
             frozen_by=data["frozen_by"],
             frozen_at_utc=data["frozen_at_utc"],
             file_hash_sha256=data["file_hash_sha256"],
-            week2_version=data["week2_version"],
+            validation_version=data.get("validation_version", data.get("week2_version", "unknown")),
             original_filename=original_filename,
         )
     except FreezeError:
@@ -198,7 +198,7 @@ def _write_manifest(manifest: FreezeManifest, manifest_path: Path) -> None:
         "frozen_by": manifest.frozen_by,
         "frozen_at_utc": manifest.frozen_at_utc,
         "file_hash_sha256": manifest.file_hash_sha256,
-        "week2_version": manifest.week2_version,
+        "validation_version": manifest.validation_version,
         "original_filename": manifest.original_filename,
     }
 
@@ -449,7 +449,7 @@ def ensure_frozen_input(
         frozen_by="week2_validation",
         frozen_at_utc=datetime.now(timezone.utc).isoformat(),
         file_hash_sha256=file_hash,
-        week2_version=WEEK2_VERSION,
+        validation_version=VALIDATION_VERSION,
         original_filename=original_filename,
     )
 

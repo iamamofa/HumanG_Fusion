@@ -1,7 +1,7 @@
 """
-Week 2: Data Integrity & Statistical Validation — Machine Output Layer (Structured JSON Summary).
+Data Integrity & Statistical Validation — Machine Output Layer (Structured JSON Summary).
 
-This module writes a single structured JSON file (week2_integrity_summary.json)
+This module writes a single structured JSON file (validation_integrity_summary.json)
 when called. It is passive: it does not pull data from the pipeline, import
 diagnostics, or modify state. It only writes JSON when explicitly invoked.
 """
@@ -10,8 +10,10 @@ import json
 from pathlib import Path
 from typing import Any, Dict
 
+from week2_validation.output_names import VALIDATION_VERSION_KEY
+
 # Output filename (contract)
-SUMMARY_FILENAME = "week2_integrity_summary.json"
+SUMMARY_FILENAME = "validation_integrity_summary.json"
 
 
 def write_week2_summary_json(
@@ -22,8 +24,8 @@ def write_week2_summary_json(
     """
     Write Data Integrity & Statistical Validation integrity summary as structured JSON.
 
-    Creates output_dir/week2_integrity_summary.json with required keys:
-    week2_version, run_timestamp_utc, dataset_hash, diagnostics_run,
+    Creates output_dir/validation_integrity_summary.json with required keys:
+    validation_version, run_timestamp_utc, dataset_hash, diagnostics_run,
     results, notes.
 
     This function is passive: it does not fetch data, import diagnostics,
@@ -31,7 +33,7 @@ def write_week2_summary_json(
 
     Args:
         output_dir: Directory where the JSON file will be written.
-        run_metadata: Dict with week2_version, run_timestamp_utc, dataset_hash.
+        run_metadata: Dict with validation_version, run_timestamp_utc, dataset_hash.
         diagnostic_results: Dict with diagnostics_run, results; notes optional.
 
     Returns:
@@ -41,7 +43,7 @@ def write_week2_summary_json(
         OSError: If the file cannot be written.
     """
     payload: Dict[str, Any] = {
-        "week2_version": run_metadata.get("week2_version", ""),
+        VALIDATION_VERSION_KEY: run_metadata.get(VALIDATION_VERSION_KEY, run_metadata.get("week2_version", "")),
         "run_timestamp_utc": run_metadata.get("run_timestamp_utc", ""),
         "dataset_hash": run_metadata.get("dataset_hash", ""),
         "diagnostics_run": diagnostic_results.get("diagnostics_run", []),
