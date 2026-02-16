@@ -112,12 +112,6 @@ Ensure your fusion data file path is correct and the file exists.
 ### **"COSMIC reference file not found"**
 Ensure `Cosmic_Fusion_v103_GRCh38.tsv` exists in `week2_validation/cosmic/`, or provide `--cosmic-data`.
 
-### **Generate sample data for testing**
-```bash
-python week2_validation/scripts/generate_demo_files.py
-```
-Creates sample fusion files in `week2_validation/` for format testing.
-
 ---
 
 ## 📚 More Information

@@ -4,6 +4,7 @@ Week 2: Data Integrity & Statistical Validation — Runtime Execution Guard.
 Lightweight runtime monitoring: prevents runaway execution, unbounded memory.
 Non-invasive. No thread spawning. No perf penalty.
 """
+from __future__ import annotations
 
 import time
 

@@ -4,6 +4,7 @@ Week 2: Data Integrity & Statistical Validation — PDF Report Generator.
 Generates a comprehensive PDF report summarizing validation results using ReportLab.
 Professional layout: title page, TOC, headers/footers, page numbers, certification page.
 """
+from __future__ import annotations
 
 import hashlib
 import json
@@ -827,7 +828,7 @@ def generate_week2_pdf_report(
             if page_num > 1:
                 header_text = f"Week 2: Data Integrity & Statistical Validation | {dataset_stem}"
                 canvas.drawString(0.75 * inch, letter[1] - 0.5 * inch, header_text)
-            left_text = "Data Integrity & Statistical Validation"
+            left_text = f"Data Integrity & Statistical Validation | v{pipeline_version}"
             canvas.drawString(0.75 * inch, 0.5 * inch, left_text)
             center_text = f"COSMIC: {cosmic_version}"
             if pipeline_version != "unknown":

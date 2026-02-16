@@ -769,7 +769,7 @@ def test_cosmic_metrics_identical_across_formats():
 
 def test_bootstrap_ci_contains_rho():
     """Test that bootstrap CI contains the point estimate rho."""
-    # Create test data with sufficient overlap
+    # Create test data with sufficient overlap (≥10 required for bootstrap CI)
     fusion_pairs = {
         ("A", "B"): 100,
         ("C", "D"): 80,
@@ -779,6 +779,8 @@ def test_bootstrap_ci_contains_rho():
         ("K", "L"): 15,
         ("M", "N"): 10,
         ("O", "P"): 5,
+        ("Q", "R"): 3,
+        ("S", "T"): 2,
     }
     
     cosmic_pairs = {
@@ -790,6 +792,8 @@ def test_bootstrap_ci_contains_rho():
         ("K", "L"): 12,
         ("M", "N"): 8,
         ("O", "P"): 4,
+        ("Q", "R"): 2,
+        ("S", "T"): 1,
     }
     
     overlap = set(fusion_pairs.keys())

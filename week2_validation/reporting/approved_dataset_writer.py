@@ -62,7 +62,7 @@ def write_approved_dataset(
     diagnostics_run: List[str],
     runtime_metadata: Dict[str, Any],
     dataset_stem: Optional[str] = None,
-) -> Tuple[Path | None, Path | None]:
+) -> Tuple[Optional[Path], Optional[Path]]:
     """
     When validation_passed is True, write cleaned dataset snapshot and certification record.
 

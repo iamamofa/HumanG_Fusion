@@ -29,4 +29,4 @@ Modules:
 # Version number for this package
 # Following semantic versioning: MAJOR.MINOR.PATCH
 # 0.1.0 means early development, first minor version
-__version__ = "0.1.0"
+__version__ = "1.0.0"

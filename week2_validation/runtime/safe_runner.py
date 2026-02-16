@@ -4,6 +4,7 @@ Week 2: Data Integrity & Statistical Validation — Atomic Failure Containment W
 Executes Data Integrity & Statistical Validation orchestration inside a hardened safety wrapper.
 Guarantees: exception classification, no partial output, clean stderr, never masks errors.
 """
+from __future__ import annotations
 
 import os
 import sys

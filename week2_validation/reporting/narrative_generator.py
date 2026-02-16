@@ -187,6 +187,29 @@ def _section_0_data_provenance(
     return "\n".join(lines)
 
 
+def _section_power_warnings(status: Dict[str, Any]) -> str:
+    """Build Power / sample-size warnings section from status power_warnings."""
+    warnings = status.get("power_warnings") or []
+    if not warnings:
+        return ""
+    lines = [
+        "## Power & Sample Size Warnings",
+        "",
+        "The following conditions may reduce statistical power or interpretability:",
+        "",
+    ]
+    for i, w in enumerate(warnings, 1):
+        wtype = w.get("type", "WARNING")
+        msg = w.get("message", "")
+        rec = w.get("recommendation", "")
+        lines.append(f"**{i}. {wtype}**  ")
+        lines.append(f"- {msg}  ")
+        if rec:
+            lines.append(f"- *Recommendation:* {rec}  ")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def _section_1_executive_summary(
     status: Dict[str, Any],
     certification: Optional[Dict[str, Any]],
@@ -940,13 +963,21 @@ def generate_narrative_report(
     diag = _load_json(diag_path)
     notes = status.get("notes") or []
 
+    try:
+        from week2_validation import __version__ as pipeline_version
+    except ImportError:
+        pipeline_version = "unknown"
+
     sections = []
     sections.append("# Data Integrity & Statistical Validation Report\n")
-    sections.append("*Data Integrity & Statistical Validation Layer*\n")
+    sections.append(f"*Data Integrity & Statistical Validation Layer — Pipeline version: {pipeline_version}*\n")
     sections.append("---\n")
     sections.append(_section_0_data_provenance(status, output_dir, dataset_stem, diag))
     sections.append(_section_1_executive_summary(status, certification))
     sections.append(_section_quality_gates(output_dir, dataset_stem))
+    power_warnings_section = _section_power_warnings(status)
+    if power_warnings_section:
+        sections.append(power_warnings_section)
     sections.append(_section_2_distribution(status, diag, output_dir))
     sections.append(_section_3_statistical_diagnostics(diag))
     sections.append(_section_4_benford(diag, notes, output_dir))

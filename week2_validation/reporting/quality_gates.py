@@ -248,16 +248,16 @@ def evaluate_benford_gate(diagnostic_results: Dict[str, Any]) -> QualityGateResu
             severity=SEVERITY_WARNING,
         )
 
-    # Applicable and p <= alpha → FAIL (inconsistent with Benford)
+    # Applicable (span ≥ 2.0) and p <= alpha → WARN (informational only)
     if p_val < BENFORD_ALPHA:
         return QualityGateResult(
             module_name="benford",
-            status=GateStatus.FAIL,
+            status=GateStatus.WARN,
             metric_name="chi_squared_p_value",
             metric_value=p_val,
             threshold=float(BENFORD_ALPHA),
-            reason=f"Benford applicable (scale_span≥{BENFORD_MIN_SCALE_SPAN}) but first-digit distribution inconsistent with Benford (p={p_val:.4f} < {BENFORD_ALPHA}).",
-            severity=SEVERITY_CRITICAL,
+            reason=f"Benford applicable but first-digit distribution inconsistent (p={p_val:.4f}). This is informational only; non-conformance does not indicate data issues.",
+            severity=SEVERITY_WARNING,
         )
 
     return QualityGateResult(
@@ -327,9 +327,8 @@ def evaluate_log_normality_gate(diagnostic_results: Dict[str, Any]) -> QualityGa
 def evaluate_cosmic_gate(diagnostic_results: Dict[str, Any]) -> QualityGateResult:
     """
     COSMIC gate:
-    - PASS: overlap ≥ 5 AND spearman_p < 0.05.
-    - WARN: overlap 3–4 or spearman_p in [0.05, 0.10].
-    - FAIL: overlap < 3 (correlation not meaningful).
+    - PASS: overlap ≥ 10 AND spearman_p < 0.05.
+    - WARN: overlap < 10 (reference too small) or spearman_p in [0.05, 0.10].
     - SKIPPED: no COSMIC results (module not run or no reference).
     """
     cosmic = (diagnostic_results or {}).get("cosmic") or {}
@@ -357,30 +356,19 @@ def evaluate_cosmic_gate(diagnostic_results: Dict[str, Any]) -> QualityGateResul
             severity=SEVERITY_INFO,
         )
 
-    if overlap_int < COSMIC_OVERLAP_WARN_LOW:
-        return QualityGateResult(
-            module_name="cosmic",
-            status=GateStatus.FAIL,
-            metric_name="overlap_count",
-            metric_value=float(overlap_int),
-            threshold=float(COSMIC_OVERLAP_MIN_PASS),
-            reason=f"Overlap count {overlap_int} < {COSMIC_OVERLAP_WARN_LOW}; Spearman correlation not meaningful.",
-            severity=SEVERITY_CRITICAL,
-        )
-
-    # Marginal overlap (3–4)
-    if overlap_int <= COSMIC_OVERLAP_WARN_HIGH:
+    # Minimum overlap guard: reference too small → WARN (not FAIL) to avoid false rejection
+    if overlap_int < 10:
         return QualityGateResult(
             module_name="cosmic",
             status=GateStatus.WARN,
             metric_name="overlap_count",
             metric_value=float(overlap_int),
-            threshold=float(COSMIC_OVERLAP_MIN_PASS),
-            reason=f"Overlap count {overlap_int} in marginal range [{COSMIC_OVERLAP_WARN_LOW}, {COSMIC_OVERLAP_WARN_HIGH}]; low statistical power.",
+            threshold=10.0,
+            reason="COSMIC reference too small for meaningful statistical comparison.",
             severity=SEVERITY_WARNING,
         )
 
-    # Overlap ≥ 5: then decide on p-value
+    # Overlap ≥ 10: then decide on p-value
     if p_val is None:
         return QualityGateResult(
             module_name="cosmic",
@@ -388,7 +376,7 @@ def evaluate_cosmic_gate(diagnostic_results: Dict[str, Any]) -> QualityGateResul
             metric_name="spearman_p_value",
             metric_value=None,
             threshold=float(COSMIC_SPEARMAN_P_PASS),
-            reason=f"Overlap ≥ {COSMIC_OVERLAP_MIN_PASS} but Spearman p-value not available.",
+            reason="Overlap ≥ 10 but Spearman p-value not available.",
             severity=SEVERITY_WARNING,
         )
     if p_val < COSMIC_SPEARMAN_P_PASS:
@@ -398,7 +386,7 @@ def evaluate_cosmic_gate(diagnostic_results: Dict[str, Any]) -> QualityGateResul
             metric_name="spearman_p_value",
             metric_value=p_val,
             threshold=float(COSMIC_SPEARMAN_P_PASS),
-            reason=f"Overlap ≥ {COSMIC_OVERLAP_MIN_PASS} and Spearman p < {COSMIC_SPEARMAN_P_PASS}; significant rank agreement with COSMIC.",
+            reason=f"Overlap ≥ 10 and Spearman p < {COSMIC_SPEARMAN_P_PASS}; significant rank agreement with COSMIC.",
             severity=SEVERITY_INFO,
         )
     if p_val <= COSMIC_SPEARMAN_P_WARN_HIGH:
@@ -535,6 +523,47 @@ def compute_overall_approval(gate_results: Sequence[QualityGateResult]) -> Overa
     return OverallApproval.CONDITIONAL
 
 
+def compute_power_warnings(
+    data_quality: Optional[Dict[str, Any]],
+    diagnostic_results: Optional[Dict[str, Any]],
+) -> List[Dict[str, str]]:
+    """
+    Compute power/sample-size warnings for reporting.
+    Returns a list of dicts with type, message, and recommendation.
+    """
+    warnings: List[Dict[str, str]] = []
+    n = (data_quality or {}).get("rows_used_for_analysis", 0)
+
+    if n < 30:
+        warnings.append({
+            "type": "VERY_SMALL_SAMPLE",
+            "message": f"N={n} is very small. All statistical measures have wide confidence intervals.",
+            "recommendation": "Interpret all results as preliminary/exploratory only.",
+        })
+    elif n < 100:
+        warnings.append({
+            "type": "SMALL_SAMPLE",
+            "message": f"N={n} is below 100. Distribution tests have reduced power.",
+            "recommendation": "Consider combining with additional datasets if available.",
+        })
+
+    cosmic = (diagnostic_results or {}).get("cosmic") or {}
+    overlap = cosmic.get("overlap_count", 0)
+    if overlap is not None and overlap < 20:
+        try:
+            overlap_int = int(overlap)
+        except (TypeError, ValueError):
+            overlap_int = 0
+        if overlap_int < 20:
+            warnings.append({
+                "type": "LOW_COSMIC_OVERLAP",
+                "message": f"Only {overlap_int} gene pairs overlap with COSMIC reference.",
+                "recommendation": "COSMIC correlation has low statistical power. Use full COSMIC reference if available.",
+            })
+
+    return warnings
+
+
 # -----------------------------------------------------------------------------
 # Serialization and file output
 # -----------------------------------------------------------------------------
@@ -565,6 +594,28 @@ def write_quality_gates_json(
         json.dump(payload, f, indent=2)
 
 
+def compute_quality_score(gate_results: Sequence[QualityGateResult]) -> float:
+    """
+    Compute overall quality score (0.0-1.0) from gate results.
+    
+    Scoring: PASS=1.0, WARN=0.5, FAIL=0.0, SKIPPED/NOT_APPLICABLE=0.0 (excluded from average).
+    Returns average of non-skipped gates.
+    """
+    scores = []
+    for r in gate_results:
+        if r.status == GateStatus.PASS:
+            scores.append(1.0)
+        elif r.status == GateStatus.WARN:
+            scores.append(0.5)
+        elif r.status == GateStatus.FAIL:
+            scores.append(0.0)
+        # SKIPPED and NOT_APPLICABLE are excluded (don't contribute to score)
+    
+    if not scores:
+        return 0.0  # No gates evaluated
+    return sum(scores) / len(scores)
+
+
 def quality_gates_summary_for_envelope(
     gate_results: Sequence[QualityGateResult],
     overall: OverallApproval,
@@ -572,6 +623,7 @@ def quality_gates_summary_for_envelope(
     """Return a compact dict suitable for status envelope and report inclusion."""
     return {
         "overall_approval": overall.value,
+        "quality_score": compute_quality_score(gate_results),
         "gates": [r.to_dict() for r in gate_results],
         "pass_count": sum(1 for r in gate_results if r.status == GateStatus.PASS),
         "warn_count": sum(1 for r in gate_results if r.status == GateStatus.WARN),

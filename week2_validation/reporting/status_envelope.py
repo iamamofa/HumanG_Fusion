@@ -4,6 +4,7 @@ Data Integrity & Statistical Validation — Machine Status Envelope.
 Extends (not replaces) JSON summary with runtime metadata.
 Sanitizes notes to avoid leaking absolute paths, stack traces, or user home.
 """
+from __future__ import annotations
 
 import re
 from datetime import datetime, timezone
@@ -75,6 +76,7 @@ def build_status_envelope(
     benford_scale_span: Optional[float] = None,
     quality_gates: Optional[dict] = None,
     data_provenance: Optional[dict] = None,
+    power_warnings: Optional[list] = None,
 ) -> dict:
     """
     Build machine-readable status envelope with runtime metadata.
@@ -141,4 +143,6 @@ def build_status_envelope(
         envelope["quality_gates"] = dict(quality_gates)
     if data_provenance is not None:
         envelope["data_provenance"] = dict(data_provenance)
+    if power_warnings is not None:
+        envelope["power_warnings"] = list(power_warnings)
     return envelope

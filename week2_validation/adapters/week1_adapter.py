@@ -56,21 +56,27 @@ def adapt_week1_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     if w2_fusion_id and w2_gene_1 and w2_gene_2 and w2_recurrence_count and w2_protein_length:
         return out
 
-    # Map geneA -> gene_1
+    # Map gene_1: geneA or gene_a
     if not w2_gene_1 and "geneA" in cols:
         out["gene_1"] = out["geneA"].astype(str)
         adaptation_applied.append("geneA -> gene_1")
+    elif not w2_gene_1 and "gene_a" in cols:
+        out["gene_1"] = out["gene_a"].astype(str)
+        adaptation_applied.append("gene_a -> gene_1")
     elif not w2_gene_1:
-        raise ValueError("Cannot adapt: missing gene_1 and geneA")
+        raise ValueError("Cannot adapt: missing gene_1 (and no geneA/gene_a)")
 
-    # Map geneB -> gene_2
+    # Map gene_2: geneB or gene_b
     if not w2_gene_2 and "geneB" in cols:
         out["gene_2"] = out["geneB"].astype(str)
         adaptation_applied.append("geneB -> gene_2")
+    elif not w2_gene_2 and "gene_b" in cols:
+        out["gene_2"] = out["gene_b"].astype(str)
+        adaptation_applied.append("gene_b -> gene_2")
     elif not w2_gene_2:
-        raise ValueError("Cannot adapt: missing gene_2 and geneB")
+        raise ValueError("Cannot adapt: missing gene_2 (and no geneB/gene_b)")
 
-    # Map recurrence
+    # Map recurrence_count: samples_detected, recurrence_frequency, count, freq, frequency
     if not w2_recurrence_count:
         if "samples_detected" in cols:
             out["recurrence_count"] = pd.to_numeric(out["samples_detected"], errors="coerce").fillna(0).astype(int)
@@ -81,20 +87,42 @@ def adapt_week1_dataframe(df: pd.DataFrame) -> pd.DataFrame:
             scaled = (freq * 1000).round(0).clip(lower=0)
             out["recurrence_count"] = scaled.astype("int64")
             adaptation_applied.append("recurrence_frequency -> recurrence_count (scaled)")
+        elif "count" in cols:
+            out["recurrence_count"] = pd.to_numeric(out["count"], errors="coerce").fillna(0).astype(int)
+            adaptation_applied.append("count -> recurrence_count")
+        elif "freq" in cols:
+            out["recurrence_count"] = pd.to_numeric(out["freq"], errors="coerce").fillna(0).astype(int)
+            adaptation_applied.append("freq -> recurrence_count")
+        elif "frequency" in cols:
+            out["recurrence_count"] = pd.to_numeric(out["frequency"], errors="coerce").fillna(0).astype(int)
+            adaptation_applied.append("frequency -> recurrence_count")
         else:
-            raise ValueError("Cannot adapt: missing recurrence_count, samples_detected, recurrence_frequency")
+            raise ValueError(
+                "Cannot adapt: missing recurrence_count (and no samples_detected, recurrence_frequency, count, freq, frequency)"
+            )
 
-    # Generate fusion_id if missing
+    # fusion_id: fusion_name or generate from gene_1::gene_2
     if not w2_fusion_id:
-        g1 = out["gene_1"].astype(str)
-        g2 = out["gene_2"].astype(str)
-        out["fusion_id"] = g1 + "::" + g2
-        adaptation_applied.append("fusion_id = gene_1::gene_2")
+        if "fusion_name" in cols:
+            out["fusion_id"] = out["fusion_name"].astype(str)
+            adaptation_applied.append("fusion_name -> fusion_id")
+        else:
+            g1 = out["gene_1"].astype(str)
+            g2 = out["gene_2"].astype(str)
+            out["fusion_id"] = g1 + "::" + g2
+            adaptation_applied.append("fusion_id = gene_1::gene_2")
 
-    # protein_length: if missing, set NaN
+    # protein_length: length, prot_len, or NaN
     if not w2_protein_length:
-        out["protein_length"] = float("nan")
-        adaptation_applied.append("protein_length = NaN (not available)")
+        if "length" in cols:
+            out["protein_length"] = pd.to_numeric(out["length"], errors="coerce")
+            adaptation_applied.append("length -> protein_length")
+        elif "prot_len" in cols:
+            out["protein_length"] = pd.to_numeric(out["prot_len"], errors="coerce")
+            adaptation_applied.append("prot_len -> protein_length")
+        else:
+            out["protein_length"] = float("nan")
+            adaptation_applied.append("protein_length = NaN (not available)")
 
     if adaptation_applied:
         print("  Week 1 (Pipeline Execution & Data Generation) adapter applied:", ", ".join(adaptation_applied))

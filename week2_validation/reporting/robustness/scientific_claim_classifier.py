@@ -18,6 +18,7 @@ def classify_scientific_claim_strength(
     null_p: Optional[float],
     stability_index: Optional[float],
     spearman_p: Optional[float] = None,
+    overlap_count: Optional[int] = None,
 ) -> Dict[str, str]:
     """
     Classify scientific claim strength based on statistical evidence.
@@ -33,6 +34,8 @@ def classify_scientific_claim_strength(
         null_p: Empirical p-value from null model test (overlap test)
         stability_index: Standard deviation of correlations across strata
         spearman_p: P-value from Spearman correlation test (optional)
+        overlap_count: Number of overlapping fusion pairs with reference (optional);
+            if < 10, returns LIMITED OVERLAP - EXPLORATORY
     
     Returns:
         Dictionary with:
@@ -47,7 +50,17 @@ def classify_scientific_claim_strength(
             "confidence_level": "LOW",
             "interpretation": "Insufficient data for classification. Correlation could not be computed.",
         }
-    
+
+    if overlap_count is not None and overlap_count < 10:
+        return {
+            "classification": "LIMITED OVERLAP - EXPLORATORY",
+            "confidence_level": "LOW",
+            "interpretation": (
+                f"Only {overlap_count} overlapping pairs; "
+                "insufficient for reliable classification. Treat as exploratory."
+            ),
+        }
+
     abs_rho = abs(observed_rho) if observed_rho is not None else 0.0
     
     # Classification logic

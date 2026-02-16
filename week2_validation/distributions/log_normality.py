@@ -738,8 +738,12 @@ def _compute_ad_with_scipy(
     # Anderson-Darling on log-transformed data (testing for normality of log-data
     # is equivalent to testing for log-normality of original data)
     log_data = np.log(data)
-    result = scipy_stats.anderson(log_data, dist='norm')
-    
+    try:
+        result = scipy_stats.anderson(log_data, dist='norm', method='interpolate')
+    except TypeError:
+        # Fallback for older SciPy versions that don't support method
+        result = scipy_stats.anderson(log_data, dist='norm')
+
     return (
         float(result.statistic),
         [float(cv) for cv in result.critical_values],

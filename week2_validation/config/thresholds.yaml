@@ -7,9 +7,9 @@
 # -------------------------------
 # General rules
 # -------------------------------
-# Indicates this run uses demo/reference data (not production clinical data).
-# When false, allow_real_data_analysis and save_real_data_plots can restrict analysis/plots in production.
-demo_mode: true
+# Set to true for testing with sample/reference data.
+# Set to false for production runs with real fusion datasets.
+demo_mode: false
 
 dataset_frozen_required: true
 # These flags were initially set to false during threshold pre-registration.

@@ -356,14 +356,20 @@ def validate_schema(df: pd.DataFrame, required_fields: Set[str]) -> None:
 
 def _validate_fusion_numeric_constraints(df: pd.DataFrame) -> None:
     """
-    Enforce runtime numeric constraints defined in fusion_schema.yaml
-    WITHOUT changing schema loader behavior.
-
-    NaN values are allowed (existing diagnostics decide). Only enforce
-    when numeric value exists.
+    Enforce runtime numeric constraints defined in fusion_schema.yaml.
+    Coerces numeric columns; raises with clear errors for non-numeric or invalid values.
     """
     if "protein_length" in df.columns:
-        # NaN <= 0 is False; only 0 and negative trigger
+        # Coerce to numeric; non-numeric values become NaN
+        original = df["protein_length"].copy()
+        df["protein_length"] = pd.to_numeric(df["protein_length"], errors="coerce")
+        coercion_failed = df["protein_length"].isna() & original.notna()
+        if coercion_failed.any():
+            bad_vals = original[coercion_failed].head(5).tolist()
+            raise SchemaValidationError(
+                f"protein_length contains non-numeric values: {bad_vals}. "
+                "All protein_length values must be numeric (integer or float)."
+            )
         invalid_mask = df["protein_length"] <= 0
         if invalid_mask.any():
             raise SchemaValidationError(
@@ -371,7 +377,15 @@ def _validate_fusion_numeric_constraints(df: pd.DataFrame) -> None:
             )
 
     if "recurrence_count" in df.columns:
-        # NaN < 0 is False; only negative triggers
+        original = df["recurrence_count"].copy()
+        df["recurrence_count"] = pd.to_numeric(df["recurrence_count"], errors="coerce")
+        coercion_failed = df["recurrence_count"].isna() & original.notna()
+        if coercion_failed.any():
+            bad_vals = original[coercion_failed].head(5).tolist()
+            raise SchemaValidationError(
+                f"recurrence_count contains non-numeric values: {bad_vals}. "
+                "All recurrence_count values must be numeric."
+            )
         invalid_mask = df["recurrence_count"] < 0
         if invalid_mask.any():
             raise SchemaValidationError(

@@ -4,6 +4,7 @@ Data Integrity & Statistical Validation — HTML Report Generator.
 Generates an HTML report with the same content as the PDF report.
 Uses all information generated for the PDF. Does not modify the PDF or any other components.
 """
+from __future__ import annotations
 
 import json
 import sys
@@ -825,6 +826,7 @@ def _build_html(
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="validation-version" content="{pipeline_version}">
   <title>Data Integrity &amp; Statistical Validation Report</title>
   <style>{MULTIQC_CSS}</style>
 </head>
@@ -839,7 +841,7 @@ def _build_html(
   {"".join(sections)}
   <div class="mqc-footer">
     Generated on {datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")} UTC &nbsp;|&nbsp;
-    Data Integrity &amp; Statistical Validation layer
+    Data Integrity &amp; Statistical Validation layer &nbsp;|&nbsp; v{pipeline_version}
   </div>
   <script>
     document.querySelectorAll('.mqc-section-header').forEach(function(h) {{

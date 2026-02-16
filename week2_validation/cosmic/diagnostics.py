@@ -31,6 +31,7 @@ import hashlib
 import logging
 import platform
 import sys
+import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional, Tuple, Any
@@ -249,29 +250,33 @@ def compute_bootstrap_spearman_ci(
         }
     
     n = len(fusion_counts)
-    if n < 3:
+    if n < 10:
+        # Sample too small for meaningful bootstrap CI
         return {
             "rho_ci_lower": None,
             "rho_ci_upper": None,
             "bootstrap_iterations": n_bootstrap,
             "bootstrap_seed": random_seed,
         }
-    
+
     rng = np.random.default_rng(random_seed)
     bootstrap_rhos = []
-    
-    for _ in range(n_bootstrap):
-        # Resample with replacement
-        indices = rng.choice(n, size=n, replace=True)
-        fusion_sample = fusion_counts[indices]
-        cosmic_sample = cosmic_counts[indices]
-        
-        try:
-            rho, _ = spearmanr(fusion_sample, cosmic_sample)
-            if not np.isnan(rho):
-                bootstrap_rhos.append(rho)
-        except Exception:
-            continue
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=RuntimeWarning)
+        warnings.filterwarnings("ignore", message=".*ConstantInput.*")
+        for _ in range(n_bootstrap):
+            # Resample with replacement
+            indices = rng.choice(n, size=n, replace=True)
+            fusion_sample = fusion_counts[indices]
+            cosmic_sample = cosmic_counts[indices]
+
+            try:
+                rho, _ = spearmanr(fusion_sample, cosmic_sample)
+                if not np.isnan(rho):
+                    bootstrap_rhos.append(rho)
+            except Exception:
+                continue
     
     if len(bootstrap_rhos) < 10:
         # Not enough valid bootstrap samples

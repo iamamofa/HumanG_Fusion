@@ -1,6 +1,7 @@
 # =============================================================================
 # Week 2: Data Integrity & Statistical Validation — Python Dependencies
 # =============================================================================
+# Requires: Python >= 3.9
 # This file lists all dependencies required to run every implemented feature.
 # Dependencies are categorized by usage and requirement level.
 # =============================================================================

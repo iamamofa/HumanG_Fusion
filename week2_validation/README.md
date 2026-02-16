@@ -18,7 +18,7 @@ This single command:
 - Executes full test suite
 - Outputs everything to `week2_validation/results/output_name/`
 
-**Note:** No demo datasets are included. Provide your own fusion data file (CSV, TSV, JSON, Parquet, or XLSX). To generate sample data for testing, run `python week2_validation/scripts/generate_demo_files.py` from the project root.
+**Note:** No demo datasets are included. Provide your own fusion data file (CSV, TSV, JSON, Parquet, or XLSX).
 
 **Results include:**
 - Statistical_Integrity_Report_{stem}.md (narrative report; {stem} from input filename)
@@ -26,6 +26,21 @@ This single command:
 - Quality gate scoring with component breakdown
 - Reproducibility lock metadata
 - All diagnostic visualizations (histograms, skewness gauge)
+
+---
+
+## COSMIC Reference Data
+
+**IMPORTANT:** The included `Cosmic_Fusion_v103_GRCh38.tsv` is a **MINIMAL PLACEHOLDER** with only 5 gene pairs (99 records). For meaningful COSMIC validation, replace it with the full COSMIC Fusion Export v103 GRCh38 (requires free academic license from https://cancer.sanger.ac.uk/cosmic/register).
+
+The pipeline will still run with the placeholder file but COSMIC validation results will show "LIMITED OVERLAP - EXPLORATORY" for all datasets.
+
+To use a custom COSMIC file:
+
+```bash
+python -m week2_validation.run_week2 --fusion-data data.csv \
+  --cosmic-data /path/to/full_cosmic_fusion.tsv --run-all
+```
 
 ---
 
@@ -47,6 +62,42 @@ This single command:
 - **Does not pass or fail your data** — It does not approve or reject based on statistics.
 - **Does not draw conclusions** — No hypothesis tests, p-value interpretation, or biological claims.
 - **Does not change your data** — It only reads and reports; it does not modify values.
+
+### Known Failure Scenarios and Expected Behavior
+
+| Scenario | Exit Code | Expected Behavior |
+|----------|-----------|-------------------|
+| Missing required columns | 10 | Pipeline exits immediately with list of missing columns |
+| protein_length contains non-numeric values | 10 | Clear error naming the invalid values |
+| Empty dataset (0 rows) | 0 | Completes with EMPTY_DATASET warning; diagnostics skipped |
+| File > 5GB | 30 | Rejected at load time with size limit message |
+| COSMIC reference missing | 30 | RuntimeError with path to expected file |
+| COSMIC overlap < 10 pairs | 0 | COSMIC gate returns WARN; claim classifier returns EXPLORATORY |
+| Benford non-conformance | 0 | Benford gate returns WARN (informational); never rejects |
+| SciPy not installed | 0 | Anderson-Darling skipped; KS-only computed; log-normality gate WARN |
+| All quality gates FAIL | 25 | Pipeline exits with QUALITY_GATE_REJECTED |
+| Week 1 format input (geneA/geneB) | 0 | Auto-adapted via week1_adapter; adapter noted in provenance |
+| Runtime exceeds 1 hour | 30 | Runtime guard triggers |
+| Memory exceeds 8GB | 30 | Memory guard triggers (requires psutil) |
+
+### Known Limitations and Failure Modes
+
+**Benford's Law Analysis:**
+- **Not valid for:** Bounded distributions (e.g., percentages 0-100%), engineered datasets with fixed ranges, low sample size (<100), or scale span <2.0 orders of magnitude.
+- **Does NOT indicate:** Data quality issues, fraud, or errors. Non-conformance is informational only and does not indicate data problems.
+
+**Log-Normal Fit Assessment:**
+- **Does NOT imply:** Biological mechanism, evolutionary pressure, causal inference, or data authenticity.
+- **Indicates only:** Statistical compatibility with a log-normal distribution model. Many natural processes produce log-normal-like distributions; this is descriptive, not explanatory.
+
+**COSMIC Comparison:**
+- **Means:** Distribution similarity and rank-order consistency between your dataset and COSMIC reference.
+- **Does NOT mean:** Biological equivalence, disease relevance, pathogenicity, or clinical significance.
+- **Limitations:** COSMIC reflects sampling bias, detection technology bias, cohort representation bias, and publication bias. Comparisons evaluate plausibility and consistency, not exact biological truth.
+
+**Statistical Validation Scope:**
+- This layer detects statistical anomalies, assesses distribution properties, and evaluates cross-validation consistency.
+- It does NOT validate biological truth, establish causality, prove data authenticity beyond statistical pattern analysis, or make clinical or diagnostic claims.
 
 ### Why It Exists
 
@@ -96,7 +147,7 @@ week2_validation/
 │   ├── diagnostics.py    # COSMIC rank-order diagnostic with bootstrap CI and reproducibility lock
 │   ├── statistical_controls.py   # Negative control correlation tests
 │   ├── quality_gate.py   # Validation scoring with transparent component breakdown
-│   ├── Cosmic_Fusion_v103_GRCh38.tsv  # Real COSMIC Fusion reference data
+│   ├── Cosmic_Fusion_v103_GRCh38.tsv  # Real COSMIC Fusion reference; override with --cosmic-data if desired
 │   ├── gene_alias_map.py   # Gene name normalization
 │   └── statistical_methodology.md   # Statistical methods documentation and assumptions
 │
@@ -140,13 +191,19 @@ week2_validation/
 | `frozen_inputs/` | Locked copies of your data (created automatically; you can delete to clear old snapshots) |
 | `run_complete.py` | Simplified runner for full pipeline execution + test suite |
 
-### Depend
+### Dependencies
 
+- **Requires:** Python >= 3.9
 - **Required:** pandas, numpy, matplotlib, PyYAML (install these to run the pipeline)
 - **Optional:** scipy (for some statistics), openpyxl (for Excel files), pyarrow (for Parquet), psutil (for memory checks)
 - **Development:** pytest (for running tests)
 
 *If optional packages are missing, the pipeline still runs but may omit some statistics or features.*
+
+**Logging and Audit Trail:**
+- Structured logging is enabled by default (text format) and writes to `validation_{run_id}.log` in the output directory
+- JSON logging format is available for machine-readable audit trails (configure via `logging_config.setup_logging(json_format=True)`)
+- All logging uses standard library modules (no additional dependencies)
 
 ---
 
@@ -204,7 +261,7 @@ If your data uses Week 1 (Pipeline Execution & Data Generation) column names (`g
 3. **Optional extra checks** — You can add any of these flags:
    - `--run-benford` — First-digit pattern check (Benford’s Law)
    - `--run-lognormal` — Log-scale distribution check
-   - `--run-cosmic` — Compare with COSMIC database (uses real COSMIC Fusion v103 GRCh38 by default; add `--cosmic-data /path/to/cosmic.tsv` to use custom COSMIC file)
+   - `--run-cosmic` — Compare with COSMIC database (uses real COSMIC Fusion v103 GRCh38 by default; add `--cosmic-data /path/to/cosmic.tsv` to use your own)
    - `--run-all` — Run all diagnostics and generate narrative report (recommended)
    - `--generate-report` — Generate Statistical_Integrity_Report_*.md markdown report
    - `--dry-run` — Only check that files exist; do not run any analysis
@@ -264,6 +321,7 @@ Status written to /path/to/outputs/week2_status.json
 | File | When created | What it contains |
 |------|--------------|------------------|
 | `week2_status_{stem}.json` | Every run | Run summary: version, dataset ID, exit code, status, which checks ran, data quality info, run time |
+| `run_manifest_{stem}.json` | Every run | Complete run metadata (single source of truth): run_id, timestamp_utc, pipeline_version, config_hash, dataset_hash, modules_executed, quality_score (0.0-1.0 computed from gate results: PASS=1.0, WARN=0.5, FAIL=0.0), warnings (power/sample size warnings), runtime_seconds, exit_code, quality_gates summary, data_quality metrics |
 | `week2_cleaned_dataset_{stem}.csv` | On success | A copy of your validated data (unchanged) |
 | `week2_dataset_certification_{stem}.json` | On success | A record that the dataset passed validation and is certified for downstream use |
 | `week2_diagnostic_results_{stem}.json` | When diagnostics run | Detailed diagnostic results including COSMIC metrics, bootstrap CI, reproducibility lock |
@@ -271,7 +329,7 @@ Status written to /path/to/outputs/week2_status.json
 | `protein_distribution.png` | When `--run-diagnostics` | Histogram visualization of protein length distribution |
 | `skewness_diagnostic.png` | When `--generate-report` or `--run-all` | Skewness gauge visualization |
 | `week2_adapted_fusion.csv` | When Week 1 (Pipeline Execution & Data Generation) format is detected | Your data after column names were converted |
-| `run_log_{stem}.txt` | Every run | Complete pipeline execution log |
+| `validation_{run_id}.log` | Every run | Structured pipeline execution log with timestamps, log levels, and module context (text format by default; JSON format available) |
 
 **Frozen snapshot** — Created under `week2_validation/frozen_inputs/<hash>/`:
 
@@ -475,11 +533,11 @@ The original file could be changed (e.g. overwritten) while the pipeline runs. T
 - **Reproducibility lock metadata** (Python/NumPy/SciPy/Pandas versions, random seeds, code version 1.1.0)
 - Gene name normalization and alias mapping for robust comparison
 
-**Required inputs:** `fusion_df` (must conform to fusion schema: `fusion_id`, `gene_1`, `gene_2`, `protein_length`, `recurrence_count`) and optionally `cosmic_df` with columns `gene_1`, `gene_2`, `recurrence_count`. Uses real COSMIC Fusion v103 GRCh38 by default (automatically loads `week2_validation/cosmic/Cosmic_Fusion_v103_GRCh38.tsv`). Pipeline transforms COSMIC Fusion format (FIVE_PRIME_GENE_SYMBOL, THREE_PRIME_GENE_SYMBOL) to standard format automatically.
+**Required inputs:** `fusion_df` (must conform to fusion schema: `fusion_id`, `gene_1`, `gene_2`, `protein_length`, `recurrence_count`) and optionally `cosmic_df` with columns `gene_1`, `gene_2`, `recurrence_count`. Uses real COSMIC Fusion v103 GRCh38 by default (automatically loads `week2_validation/cosmic/Cosmic_Fusion_v103_GRCh38.tsv`). Add `--cosmic-data /path/to/cosmic.tsv` to use your own reference. Pipeline transforms COSMIC Fusion format (FIVE_PRIME_GENE_SYMBOL, THREE_PRIME_GENE_SYMBOL) to standard format automatically.
 
 **Optional dependencies:** SciPy (for Spearman correlation, bootstrap CI, hypergeometric test; graceful degradation without it).
 
-**Real vs synthetic:** Used with real fusion data and real COSMIC reference when `--run-cosmic` is set. Default COSMIC is real COSMIC Fusion v103 GRCh38 (`week2_validation/cosmic/Cosmic_Fusion_v103_GRCh38.tsv`). Pipeline will fail if COSMIC cannot be loaded (no fallback to synthetic data).
+**Real vs synthetic:** Used with real fusion data and COSMIC reference when `--run-cosmic` is set. Default COSMIC is real COSMIC Fusion v103 GRCh38. Pipeline will fail if COSMIC cannot be loaded (no fallback to synthetic data).
 
 **Writes files:** No (results written to `week2_diagnostic_results_{stem}.json` by pipeline).
 
@@ -592,7 +650,7 @@ This layer does not produce formal "approved" outputs. It provides diagnostic in
   - **Negative control correlation** (shuffled baseline)
   - **Quality gate scoring** (0.0–1.0) with transparent component breakdown
   - Gene name normalization and alias mapping (case-insensitive, whitespace-trimmed)
-  - Real COSMIC Fusion v103 GRCh38 reference data (default)
+  - Real COSMIC Fusion v103 GRCh38 reference (default; override with `--cosmic-data` if desired)
   - Automatic format transformation (COSMIC Fusion TSV → standard format)
   - **Statistical methodology documentation** (`cosmic/statistical_methodology.md`)
   - **Reproducibility lock metadata** (Python 3.11.3, NumPy 2.2.6, SciPy 1.15.1, Pandas 2.2.3, code v1.1.0)
@@ -619,12 +677,13 @@ This layer does not produce formal "approved" outputs. It provides diagnostic in
 - Frozen snapshot directory under `week2_validation/frozen_inputs/<hash_prefix>/` when freeze is performed.
 - Output directory (user-specified via `--output-dir`, or `week2_validation/results/{output_name}/` when using `run_complete.py`):
   - `week2_status_{stem}.json` — Machine-readable status envelope (every run)
+  - `run_manifest_{stem}.json` — Complete run metadata: run_id, timestamp, pipeline version, config_hash, dataset_hash, modules_executed, quality_score (0.0-1.0), warnings, runtime_seconds, exit_code, quality_gates, data_quality (every run)
   - `week2_cleaned_dataset_{stem}.csv` and `week2_dataset_certification_{stem}.json` — Validated dataset and certification (on success)
   - `week2_diagnostic_results_{stem}.json` — Full diagnostic results including COSMIC metrics, bootstrap CI, reproducibility lock (when diagnostics run)
   - `Statistical_Integrity_Report_{stem}.md` — Comprehensive narrative report with methodology, bias disclosure, and reproducibility info (when `--generate-report` or `--run-all`)
   - `protein_distribution.png` — Histogram visualization (when `--run-diagnostics`)
   - `skewness_diagnostic.png` — Dynamic skewness gauge (when `--generate-report` or `--run-all`)
-  - `run_log_{stem}.txt` — Complete pipeline execution log (every run)
+  - `validation_{run_id}.log` — Structured pipeline execution log with timestamps and log levels (every run; text format by default, JSON format available)
   - `week2_adapted_fusion.csv` — Adapted dataset (when Week 1 format is detected)
 
 ---
@@ -641,6 +700,10 @@ The COSMIC validation module has been enhanced with comprehensive statistical me
 
 ### Reproducibility & Transparency
 - **Reproducibility Lock:** Complete metadata capture (Python, NumPy, SciPy, Pandas versions, random seeds, code version)
+- **Run Manifest System:** Single source of truth (`run_manifest_{stem}.json`) with run_id, config_hash, dataset_hash, quality_score, warnings, runtime_seconds, and complete execution metadata
+- **Structured Logging:** Audit trail logging with timestamps, log levels, and module context (text format by default; JSON format available for machine-readable logs)
+- **Quality Score Computation:** Overall quality score (0.0-1.0) computed from gate results (PASS=1.0, WARN=0.5, FAIL=0.0) for quantitative assessment
+- **Power Warnings:** Automatic detection and reporting of small sample sizes and low COSMIC overlap with recommendations
 - **Score Component Breakdown:** Detailed breakdown of correlation, enrichment, negative control, and overlap components
 - **Statistical Methodology Documentation:** Comprehensive explanations of methods, assumptions, and limitations (`cosmic/statistical_methodology.md`)
 

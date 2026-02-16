@@ -54,6 +54,7 @@ Security considerations:
     - No sensitive data is logged or printed
     - Diagnostics only run when explicitly requested AND dataset is frozen
 """
+from __future__ import annotations
 
 # =============================================================================
 # STANDARD LIBRARY IMPORTS
@@ -62,6 +63,7 @@ Security considerations:
 # 'argparse' helps read and understand command-line arguments (user instructions)
 import argparse
 import io
+import logging
 import math
 # 'json' for writing status envelope
 import json
@@ -71,10 +73,14 @@ import sys
 import time
 # 'dataclass' creates simple classes for holding related data together
 from dataclasses import dataclass
+# 'datetime' for manifest timestamp
+from datetime import datetime, timezone
 # 'Path' helps work with file and folder locations on the computer
 from pathlib import Path
 # 'Optional' indicates that a value might be present or might be None (empty)
 from typing import Optional
+
+from week2_validation import __version__
 
 # =============================================================================
 # RUN LOG TEE (capture console output to file)
@@ -250,6 +256,7 @@ class PipelineConfig:
     run_benford_controls: bool      # True = run Benford implementation self-tests (synthetic data), False = skip
     generate_report: bool           # True = generate Statistical_Integrity_Report at end
     generate_pdf: bool              # True = generate PDF report at end
+    strict: bool                    # True = require exact schema (no Week 1 adapter)
 
 
 # =============================================================================
@@ -499,6 +506,13 @@ def create_argument_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    optional_group.add_argument(
+        "--strict",
+        action="store_true",
+        default=False,
+        help="Require exact schema match (fusion_id, gene_1, gene_2, protein_length, recurrence_count). Disable Week 1 adapter; useful for production.",
+    )
+
     return parser
 
 
@@ -582,6 +596,7 @@ def validate_arguments(args: argparse.Namespace) -> PipelineConfig:
         run_benford_controls=args.run_benford_controls or run_all,
         generate_report=getattr(args, "generate_report", False) or run_all,
         generate_pdf=getattr(args, "generate_pdf", False),
+        strict=getattr(args, "strict", False),
     )
 
 
@@ -715,6 +730,7 @@ def execute_diagnostics(
     Returns:
         Exit code: 0 for success, non-zero for failure.
     """
+    _log = logging.getLogger("week2_validation")
     print("Starting diagnostic analysis...")
     print()
     
@@ -729,10 +745,11 @@ def execute_diagnostics(
             save_protein_distribution_png,
         )
     except ImportError as e:
+        _log.error("Cannot import diagnostic module: %s. Make sure all required dependencies are installed.", e)
         print(f"Error: Cannot import diagnostic module: {e}", file=sys.stderr)
         print("Make sure all required dependencies are installed.", file=sys.stderr)
         return int(Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR)
-    
+
     # -------------------------------------------------------------------------
     # Load the fusion data for diagnostic analysis
     # Use frozen path if provided (Data Integrity & Statistical Validation defensive freeze)
@@ -741,19 +758,21 @@ def execute_diagnostics(
     try:
         fusion_df = load_fusion_data(str(data_path))
     except Exception as e:
+        _log.error("Error loading fusion data for diagnostics: %s", e)
         print(f"Error loading fusion data for diagnostics: {e}", file=sys.stderr)
         return int(Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR)
-    
+
     # -------------------------------------------------------------------------
     # Extract protein_length column for analysis
     # No assumptions about data format - just use what's in the required column
     # -------------------------------------------------------------------------
     if "protein_length" not in fusion_df.columns:
+        _log.error("'protein_length' column not found in fusion data.")
         print("Error: 'protein_length' column not found in fusion data.", file=sys.stderr)
         return int(Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR)
-    
+
     protein_lengths = fusion_df["protein_length"].tolist()
-    
+
     # -------------------------------------------------------------------------
     # Run diagnostics (returns DiagnosticResult, does NOT save files)
     # -------------------------------------------------------------------------
@@ -806,17 +825,19 @@ def execute_diagnostics(
             if saved_path is not None:
                 print(f"Protein distribution saved: {saved_path.name}")
         except Exception as save_err:
+            _log.warning("Could not save histogram: %s", save_err)
             print(f"Warning: Could not save histogram: {save_err}", file=sys.stderr)
-        
+
         # Comprehensive distribution plot is generated later in generate_report with actual data
         print()
         print("Diagnostic analysis complete.")
         print("NOTE: Results are diagnostic only. No interpretation provided.")
         
     except Exception as e:
+        _log.error("Error during diagnostic analysis: %s", e)
         print(f"Error during diagnostic analysis: {e}", file=sys.stderr)
         return int(Week2ExitCode.DIAGNOSTIC_RUNTIME_ERROR)
-    
+
     return 0
 
 
@@ -1411,6 +1432,7 @@ def execute_cosmic_diagnostics(
                     null_p=null_p,
                     stability_index=stability_index,
                     spearman_p=spearman_p,
+                    overlap_count=result.get("overlap_count"),
                 )
                 advanced_inference["claim_strength"] = claim_strength_result
                 if claim_strength_result.get("classification"):
@@ -1672,10 +1694,17 @@ def run_pipeline(config: PipelineConfig) -> int:
         PipelineError: If something goes wrong during pipeline execution.
     """
     global _run_metadata
+    from week2_validation.utils.logging_config import setup_logging, get_run_id
+    logger = setup_logging(config.output_dir)
+    _run_metadata["run_id"] = get_run_id()
+    pipeline_start_time = time.monotonic()
+    logger.info(f"Pipeline started | run_id={_run_metadata['run_id']} | dataset={config.dataset_stem}")
+
     # Print a header banner to clearly show the pipeline is starting
     print("=" * 60)
     print("Data Integrity & Statistical Validation Pipeline")
     print("=" * 60)
+    print(f"Pipeline version: {__version__}")
     print()
 
     # =========================================================================
@@ -1691,6 +1720,10 @@ def run_pipeline(config: PipelineConfig) -> int:
             config_path = Path(__file__).parent / "config" / "thresholds.yaml"
         
         week2_config = load_config(config_path)
+        import hashlib
+        with open(config_path, "rb") as cf:
+            config_hash = hashlib.sha256(cf.read()).hexdigest()[:12]
+        logger.info(f"Configuration loaded | file={config_path.name} | config_hash={config_hash}")
         print(f"  Configuration loaded from: {config_path.name}")
         print(f"  demo_mode: {week2_config.demo_mode}")
         print(f"  dataset_frozen_required: {week2_config.dataset_frozen_required}")
@@ -1726,6 +1759,7 @@ def run_pipeline(config: PipelineConfig) -> int:
         )
         # Get the actual frozen data file path for downstream use
         frozen_input_path = get_frozen_data_path(frozen_input_dir)
+        logger.info(f"Freeze complete | frozen_data={frozen_input_path}")
         print(f"  Frozen data location: {frozen_input_path}")
         # Capture data provenance for reports (chain of custody)
         manifest_path = frozen_input_dir / "manifest.json"
@@ -1772,21 +1806,28 @@ def run_pipeline(config: PipelineConfig) -> int:
     # =========================================================================
     try:
         raw_df = load_data(str(frozen_input_path))
-        adapted_df = adapt_week1_dataframe(raw_df)
-        validate_schema(adapted_df, REQUIRED_FUSION_FIELDS)
-        effective_data_path = frozen_input_path
-        if "geneA" in raw_df.columns or "geneB" in raw_df.columns or "samples_detected" in raw_df.columns or "recurrence_frequency" in raw_df.columns:
-            adapted_path = config.output_dir / "validation_adapted_fusion.csv"
-            adapted_df.to_csv(adapted_path, sep=",", index=False)
-            effective_data_path = adapted_path
-            if _run_metadata.get("data_provenance") is not None:
-                _run_metadata["data_provenance"]["schema_adapter_applied"] = True
-            print("  Week 1 (Pipeline Execution & Data Generation) format detected; adapted data written for diagnostics")
+        if config.strict:
+            validate_schema(raw_df, REQUIRED_FUSION_FIELDS)
+            adapted_df = raw_df
+            effective_data_path = frozen_input_path
+        else:
+            adapted_df = adapt_week1_dataframe(raw_df)
+            validate_schema(adapted_df, REQUIRED_FUSION_FIELDS)
+            effective_data_path = frozen_input_path
+            alt_cols = {"geneA", "geneB", "gene_a", "gene_b", "samples_detected", "recurrence_frequency", "fusion_name", "length", "prot_len", "count", "freq", "frequency"}
+            if alt_cols & set(raw_df.columns):
+                adapted_path = config.output_dir / "validation_adapted_fusion.csv"
+                adapted_df.to_csv(adapted_path, sep=",", index=False)
+                effective_data_path = adapted_path
+                if _run_metadata.get("data_provenance") is not None:
+                    _run_metadata["data_provenance"]["schema_adapter_applied"] = True
+                print("  Week 1 (Pipeline Execution & Data Generation) format detected; adapted data written for diagnostics")
     except ValueError as e:
         raise PipelineError(f"Input schema adaptation failed: {e}") from e
 
     # =========================================================================
     # STEP 3: Validate all input files
+    logger.info("Validating inputs")
     # =========================================================================
     print("Validating inputs...")
     validate_inputs(config, frozen_data_path=effective_data_path)
@@ -1843,6 +1884,7 @@ def run_pipeline(config: PipelineConfig) -> int:
         }
         _run_metadata["diagnostics_skipped"] = True
         _run_metadata["skip_reason"] = "EMPTY_DATASET"
+        logger.warning("EMPTY_DATASET_DETECTED — Diagnostics skipped, pipeline completed with warnings.")
         print("EMPTY_DATASET_DETECTED — Diagnostics skipped, pipeline completed with warnings.")
 
     # =========================================================================
@@ -1850,6 +1892,7 @@ def run_pipeline(config: PipelineConfig) -> int:
     # =========================================================================
     if config.dry_run:
         # In dry run mode, we only validate inputs - no actual analysis
+        logger.info("Dry run complete — no diagnostics performed.")
         print("=" * 60)
         print("DRY RUN MODE")
         print("=" * 60)
@@ -1862,6 +1905,7 @@ def run_pipeline(config: PipelineConfig) -> int:
     # =========================================================================
     if not config.run_diagnostics and not config.run_benford and not config.run_lognormal and not config.run_cosmic:
         # Dataset is frozen, but no diagnostic flag was provided
+        logger.info("Dataset frozen — diagnostics not requested.")
         print("=" * 60)
         print("DATASET FROZEN - DIAGNOSTICS NOT REQUESTED")
         print("=" * 60)
@@ -2010,9 +2054,53 @@ def run_pipeline(config: PipelineConfig) -> int:
             if config.cosmic_data_path is not None:
                 _run_metadata["cosmic_reference_loaded"] = cosmic_loaded
 
+        overall = None  # Track quality gate result
+        # Quality gates: per-module PASS/WARN/FAIL and overall approval (when diagnostics ran)
+        if not _run_metadata.get("diagnostics_skipped") and exit_code == 0:
+            try:
+                from week2_validation.reporting.quality_gates import (
+                    OverallApproval,
+                    compute_power_warnings,
+                    evaluate_all_gates,
+                    quality_gates_summary_for_envelope,
+                    write_quality_gates_json,
+                )
+                gate_results, overall = evaluate_all_gates(
+                    _run_metadata.get("diagnostic_results") or {},
+                    _run_metadata.get("data_quality"),
+                    _run_metadata.get("diagnostics_run"),
+                )
+                _run_metadata["quality_gates"] = quality_gates_summary_for_envelope(
+                    gate_results, overall
+                )
+                _run_metadata["power_warnings"] = compute_power_warnings(
+                    _run_metadata.get("data_quality"),
+                    _run_metadata.get("diagnostic_results"),
+                )
+                gates_path = config.output_dir / QUALITY_GATES_FILENAME_PATTERN.format(
+                    stem=config.dataset_stem
+                )
+                write_quality_gates_json(gates_path, gate_results, overall, config.dataset_stem)
+                if overall == OverallApproval.REJECTED:
+                    exit_code = int(Week2ExitCode.QUALITY_GATE_REJECTED)
+                # Aggregate certificate (deliverable: cleaned, validated dataset approval summary)
+                try:
+                    from week2_validation.reporting.module_certificates import (
+                        write_aggregate_certificate,
+                        CERTIFICATES_SUBDIR,
+                    )
+                    agg_path = write_aggregate_certificate(config.output_dir, _run_metadata)
+                    if agg_path is not None:
+                        print(f"Certificate written: {CERTIFICATES_SUBDIR}/{agg_path.name}")
+                except Exception as agg_err:
+                    print(f"Warning: Aggregate certificate write failed: {agg_err}", file=sys.stderr)
+            except Exception as qg_err:
+                print(f"Warning: Quality gate evaluation failed: {qg_err}", file=sys.stderr)
+
         # Optional: write approved dataset artifacts when validation succeeded (additive only)
         # Does not affect exit_code, pipeline success/failure, or status envelope on failure
-        if exit_code == 0:
+        gate_rejected = (overall == OverallApproval.REJECTED) if overall is not None else False
+        if exit_code == 0 and not gate_rejected:
             try:
                 try:
                     import scipy
@@ -2045,43 +2133,6 @@ def run_pipeline(config: PipelineConfig) -> int:
                 print(f"Warning: Approved dataset write skipped: {_e}", file=sys.stderr)
                 _run_metadata["approved_dataset_write_note"] = f"Write skipped: {type(_e).__name__}"
 
-        # Quality gates: per-module PASS/WARN/FAIL and overall approval (when diagnostics ran)
-        if not _run_metadata.get("diagnostics_skipped") and exit_code == 0:
-            try:
-                from week2_validation.reporting.quality_gates import (
-                    OverallApproval,
-                    evaluate_all_gates,
-                    quality_gates_summary_for_envelope,
-                    write_quality_gates_json,
-                )
-                gate_results, overall = evaluate_all_gates(
-                    _run_metadata.get("diagnostic_results") or {},
-                    _run_metadata.get("data_quality"),
-                    _run_metadata.get("diagnostics_run"),
-                )
-                _run_metadata["quality_gates"] = quality_gates_summary_for_envelope(
-                    gate_results, overall
-                )
-                gates_path = config.output_dir / QUALITY_GATES_FILENAME_PATTERN.format(
-                    stem=config.dataset_stem
-                )
-                write_quality_gates_json(gates_path, gate_results, overall, config.dataset_stem)
-                if overall == OverallApproval.REJECTED:
-                    exit_code = int(Week2ExitCode.QUALITY_GATE_REJECTED)
-                # Aggregate certificate (deliverable: cleaned, validated dataset approval summary)
-                try:
-                    from week2_validation.reporting.module_certificates import (
-                        write_aggregate_certificate,
-                        CERTIFICATES_SUBDIR,
-                    )
-                    agg_path = write_aggregate_certificate(config.output_dir, _run_metadata)
-                    if agg_path is not None:
-                        print(f"Certificate written: {CERTIFICATES_SUBDIR}/{agg_path.name}")
-                except Exception as agg_err:
-                    print(f"Warning: Aggregate certificate write failed: {agg_err}", file=sys.stderr)
-            except Exception as qg_err:
-                print(f"Warning: Quality gate evaluation failed: {qg_err}", file=sys.stderr)
-
         # Build provenance chain and write diagnostic results (including provenance)
         diag_results = _run_metadata.get("diagnostic_results") or {}
         _build_and_attach_provenance(_run_metadata, diag_results)
@@ -2109,6 +2160,40 @@ def run_pipeline(config: PipelineConfig) -> int:
                 pass
             except Exception as e:
                 print(f"Warning: Could not serialize diagnostic results to JSON: {e}", file=sys.stderr)
+
+    # Write run manifest (single source of truth for this run)
+    try:
+        import hashlib
+        config_path = Path(__file__).parent / "config" / "thresholds.yaml"
+        with open(config_path, "rb") as cf:
+            config_hash = hashlib.sha256(cf.read()).hexdigest()[:12]
+        
+        runtime_seconds = time.monotonic() - pipeline_start_time
+        quality_gates_dict = _run_metadata.get("quality_gates", {})
+        quality_score = quality_gates_dict.get("quality_score", 0.0)
+        power_warnings = _run_metadata.get("power_warnings", [])
+
+        manifest = {
+            "run_id": _run_metadata.get("run_id", ""),
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "pipeline_version": __version__,
+            "config_hash": config_hash,
+            "dataset_hash": _run_metadata.get("dataset_hash", ""),
+            "modules_executed": _run_metadata.get("diagnostics_run", []),
+            "quality_score": quality_score,
+            "warnings": power_warnings,
+            "runtime_seconds": round(runtime_seconds, 2),
+            "exit_code": exit_code,
+            "quality_gates": quality_gates_dict,
+            "data_quality": _run_metadata.get("data_quality", {}),
+        }
+
+        manifest_path = config.output_dir / f"run_manifest_{config.dataset_stem}.json"
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2)
+        print(f"Run manifest written: {manifest_path.name}")
+    except Exception as e:
+        print(f"Warning: Run manifest write failed: {e}", file=sys.stderr)
 
     return exit_code
 
@@ -2222,6 +2307,7 @@ def main() -> int:
             benford_scale_span=meta.get("benford_scale_span"),
             quality_gates=meta.get("quality_gates"),
             data_provenance=meta.get("data_provenance"),
+            power_warnings=meta.get("power_warnings"),
         )
         envelope["runtime_seconds"] = round(runtime_seconds, 2)
         status_path = config.output_dir / STATUS_FILENAME_PATTERN.format(stem=config.dataset_stem)
